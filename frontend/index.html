@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interview Prep Studio</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Interview Prep Studio</div>
+    <button id="theme-toggle" class="btn ghost small" type="button" aria-label="Toggle dark mode">Theme</button>
+  </header>
+
+  <main>
+    <!-- Setup -------------------------------------------------------------->
+    <section id="screen-setup" class="screen">
+      <div class="card setup-card">
+        <h1>Set up your interview</h1>
+        <p class="muted">A realistic, continuous mock interview with a behavioral and technical round, run by a Gemma 4 interviewer.</p>
+        <div id="key-warning" class="notice" hidden></div>
+
+        <form id="setup-form">
+          <label class="field">
+            <span>Target role</span>
+            <input name="role" required placeholder="e.g. Software Engineer, Data Analyst, Product Manager" value="Software Engineer" />
+          </label>
+
+          <fieldset class="field">
+            <legend>Experience level</legend>
+            <div class="segmented">
+              <label><input type="radio" name="level" value="Entry" /> Entry</label>
+              <label><input type="radio" name="level" value="Mid" checked /> Mid</label>
+              <label><input type="radio" name="level" value="Senior" /> Senior</label>
+            </div>
+          </fieldset>
+
+          <label class="field">
+            <span>Company type <em class="muted">(optional)</em></span>
+            <input name="companyType" placeholder="e.g. early-stage startup, big tech, fintech" />
+          </label>
+
+          <fieldset class="field">
+            <legend>Rounds</legend>
+            <div class="segmented">
+              <label><input type="radio" name="rounds" value="both" checked /> Both</label>
+              <label><input type="radio" name="rounds" value="behavioral" /> Behavioral</label>
+              <label><input type="radio" name="rounds" value="technical" /> Technical</label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field">
+            <legend>Length (main questions per round)</legend>
+            <div class="segmented">
+              <label><input type="radio" name="length" value="short" /> Short · 3</label>
+              <label><input type="radio" name="length" value="standard" checked /> Standard · 5</label>
+              <label><input type="radio" name="length" value="long" /> Long · 8</label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field">
+            <legend>Model</legend>
+            <div class="segmented">
+              <label><input type="radio" name="model" value="gemma-4-31b-it" checked /> Gemma 4 31B <em class="muted">(higher quality)</em></label>
+              <label><input type="radio" name="model" value="gemma-4-26b-a4b-it" /> Gemma 4 26B A4B <em class="muted">(faster)</em></label>
+            </div>
+          </fieldset>
+
+          <label class="check">
+            <input type="checkbox" name="timer" checked /> Show a per-question timer
+          </label>
+
+          <button class="btn primary" type="submit">Start interview</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Interview ---------------------------------------------------------->
+    <section id="screen-interview" class="screen" hidden>
+      <div class="interview-bar">
+        <div>
+          <div id="progress" class="progress">Introduction</div>
+          <div id="role-line" class="muted small"></div>
+        </div>
+        <div class="bar-actions">
+          <span id="timer" class="timer" hidden>0:00</span>
+          <button id="star-btn" class="btn ghost small" type="button" hidden aria-expanded="false">STAR tip</button>
+          <button id="end-btn" class="btn ghost small" type="button">End interview</button>
+        </div>
+      </div>
+
+      <div id="star-tip" class="card tip" hidden></div>
+
+      <div id="transcript" class="transcript" aria-live="polite"></div>
+
+      <div id="typing" class="msg msg-interviewer typing" hidden>
+        <div class="avatar" aria-hidden="true">J</div>
+        <div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      </div>
+
+      <div id="error" class="notice error" hidden>
+        <span id="error-text"></span>
+        <button id="error-retry" class="btn small" type="button">Retry</button>
+      </div>
+
+      <form id="composer" class="composer">
+        <div id="code-area" class="code-area" hidden>
+          <label class="field">
+            <span id="code-label">Code editor</span>
+            <textarea id="code" class="code" spellcheck="false" autocomplete="off" autocapitalize="off" rows="12" placeholder="// Write your solution here. Tab indents, Shift+Tab outdents."></textarea>
+          </label>
+        </div>
+        <label class="field">
+          <span id="answer-label">Your answer</span>
+          <textarea id="answer" rows="4" placeholder="Type your answer… (Ctrl+Enter to send)"></textarea>
+        </label>
+        <div class="composer-actions">
+          <button id="hint-btn" class="btn ghost" type="button" hidden>I'm stuck</button>
+          <span id="hint-count" class="muted small"></span>
+          <button id="send-btn" class="btn primary" type="submit">Send</button>
+        </div>
+      </form>
+
+      <div id="finished" class="finished" hidden>
+        <button id="report-btn" class="btn primary" type="button">View feedback report</button>
+      </div>
+    </section>
+
+    <!-- Report ------------------------------------------------------------->
+    <section id="screen-report" class="screen" hidden>
+      <div class="report-head">
+        <h1>Feedback report</h1>
+        <div class="bar-actions">
+          <button id="rescore-btn" class="btn ghost" type="button" hidden>Try scoring again</button>
+          <button id="retry-weak-btn" class="btn" type="button" hidden>Retry weak questions</button>
+          <button id="new-btn" class="btn primary" type="button">New interview</button>
+        </div>
+      </div>
+      <div id="report-loading" class="card loading" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Reviewing your interview carefully… this can take up to a minute.</p>
+      </div>
+      <div id="report-error" class="notice error" hidden></div>
+      <div id="report"></div>
+    </section>
+  </main>
+</body>
+</html>
