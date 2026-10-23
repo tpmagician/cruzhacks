@@ -1,0 +1,20 @@
+{
+  "name": "interview-prep-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Realistic mock interviews (behavioral + technical) powered by Gemma 4 via the Gemini API.",
+  "type": "module",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node --watch backend/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@google/genai": "^2.31.0",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0"
+  }
+}
