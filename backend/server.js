@@ -64,6 +64,13 @@ function cleanQuestionRef(q) {
     type: TYPES.includes(q.type) ? q.type : 'domain',
     topic: clip(q.topic, 200),
     retryText: clip(q.retryText, 8000) || undefined,
+    problem: q.problem && typeof q.problem === 'object'
+      ? {
+        title: clip(q.problem.title, 100),
+        difficulty: ['Easy', 'Medium', 'Hard'].includes(q.problem.difficulty) ? q.problem.difficulty : '',
+        brief: clip(q.problem.brief, 400),
+      }
+      : undefined,
   };
 }
 
@@ -80,7 +87,6 @@ function cleanTurn(t = {}) {
     hintsLeftToday: int(t.hintsLeftToday, 0, 10),
     idleSeconds: int(t.idleSeconds, 0, 3600),
     forced: Boolean(t.forced),
-    final: Boolean(t.final),
     includesCode: Boolean(t.includesCode),
     current: t.current ? { type: TYPES.includes(t.current.type) ? t.current.type : 'domain', topic: clip(t.current.topic, 200) } : null,
     next: cleanQuestionRef(t.next),

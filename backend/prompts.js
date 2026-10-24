@@ -19,6 +19,13 @@ const ON_SCREEN = 'Out loud, introduce the problem in one or two sentences and t
 
 export const isProblemType = (type) => type === 'coding' || type === 'sql';
 
+/** The specific problem picked from the problem bank, if any. */
+function assigned(q) {
+  if (!q.problem?.title) return null;
+  const { title, difficulty, brief } = q.problem;
+  return `Present this problem: "${title}"${difficulty ? ` (${difficulty})` : ''}, which tests ${q.topic}. The task: ${brief} Use "${title}" as the Title${difficulty ? ` and ${difficulty} as the Difficulty` : ''}, and write the full statement, examples, and constraints in your own words, keeping the same core task and difficulty.`;
+}
+
 function questionGuidance(q, setup) {
   if (q.retryText) {
     if (isProblemType(q.type)) {
@@ -33,9 +40,9 @@ function questionGuidance(q, setup) {
     case 'conceptual':
       return `Ask one conceptual technical question about ${q.topic}, pitched at a ${level}-level ${setup.role}. It should invite reasoning and tradeoffs, not trivia.`;
     case 'coding':
-      return `Present one self-contained, LeetCode-style coding problem (${q.topic}) that a ${level}-level candidate could solve in about 15 to 20 minutes. ${ON_SCREEN} Ask them to write their solution in the code editor and to explain their approach and its time and space complexity.`;
+      return `${assigned(q) ?? `Present one self-contained, LeetCode-style coding problem (${q.topic}) that a ${level}-level candidate could solve in about 15 to 20 minutes.`} ${ON_SCREEN} Ask them to write their solution in the code editor and to explain their approach and its time and space complexity.`;
     case 'sql':
-      return `Present one LeetCode-style SQL problem focused on ${q.topic}, built on a small schema of one to three tables that answers a realistic business question. ${ON_SCREEN} Ask them to write the query in the editor and explain their approach.`;
+      return `${assigned(q) ?? `Present one LeetCode-style SQL problem focused on ${q.topic}, built on a small schema of one to three tables that answers a realistic business question.`} ${ON_SCREEN} Ask them to write the query in the editor and explain their approach.`;
     case 'product':
       return `Ask one product-management question about ${q.topic}, framed as a realistic scenario for a ${level}-level ${setup.role}.`;
     default:
@@ -45,7 +52,7 @@ function questionGuidance(q, setup) {
 
 function describeNext(next, setup) {
   if (!next || next.action === 'candidate_questions') {
-    return 'let them know that covers the questions you had for them, and ask, "Do you have any questions for me?"';
+    return 'let them know that was the last question you had for them, and ask, "Do you have any questions for me?" Then stop and wait for their answer.';
   }
   const guidance = questionGuidance(next, setup);
   if (next.action === 'switch_round') {
@@ -154,7 +161,7 @@ function problemFormat(type) {
 - Every example has an Input line, an Output line, and usually an Explanation line. ${sql ? 'Example inputs and outputs are small ASCII tables.' : 'Inputs use the exact parameter names from the description, for example: nums = [1,2,3], k = 2.'}
 - Wrap identifiers and literal values in backticks in the description and constraints.
 - Trace every example by hand and make sure each Output is exactly correct.
-- Write a new problem that fits the requested topic; the one below only shows the format.
+- Write the problem you were asked to present; the one below only shows the format.
 - If this reply does not present a new problem, do not write a <problem> block.
 
 ${PROBLEM_EXAMPLE[type]}`;
@@ -186,7 +193,7 @@ export function buildInterviewerTurn(setup, turn) {
       const plan = (turn.roundsPlanned ?? [])
         .map((r) => `${r.count} ${ROUND_LABEL[r.round]} question${r.count === 1 ? '' : 's'}`)
         .join(', then ');
-      directive = `Open the interview. Greet the candidate, introduce yourself by first name and role in one sentence, briefly explain how today will go (${plan || 'a few questions'}, then time for their questions), and then ${describeNext(turn.next, setup).replace(/^move on to /, 'ask ')}`;
+      directive = `Open the interview. Greet the candidate, introduce yourself by first name and role in one sentence, briefly explain how today will go (${plan || 'a few questions'}, then time for their questions, then their feedback report right after), and then ${describeNext(turn.next, setup).replace(/^move on to /, 'ask ')}`;
       break;
     }
 
@@ -226,14 +233,11 @@ If the answer is complete enough to move on, give a brief neutral acknowledgment
       break;
 
     case 'candidate_questions':
-      if (turn.final) {
-        directive = `You are in the part where the candidate asks you questions. Answer their question in character, honestly and concisely, with realistic but generic details about the team and the work (do not invent specific confidential facts or compensation numbers). Then close the interview warmly: thank them for their time, mention next steps in general terms, and say goodbye. Do not ask any further questions.`;
-      } else {
-        directive = `You are in the part where the candidate asks you questions.
+      directive = `You are in the part where the candidate asks you questions.
 If they asked a question, answer it in character, honestly and concisely, with realistic but generic details about the team and the work (do not invent specific confidential facts or compensation numbers), then ask whether they have any other questions. Begin with ACTION: CONTINUE.
-If they said they have no more questions or are ready to finish, close the interview warmly: thank them for their time, mention next steps in general terms, and say goodbye without asking anything. Begin with ACTION: END.`;
-        format = ACTION_FORMAT('CONTINUE', 'END');
-      }
+If they only said yes (or that they have a question) without asking it yet, invite them to go ahead in one short sentence. Begin with ACTION: CONTINUE.
+If they said no, that they have no more questions, or that they are ready to finish, close the interview warmly: thank them for their time, tell them their practice feedback report (written for them) will appear on their screen right after the call, and say goodbye without asking anything. Begin with ACTION: END.`;
+      format = ACTION_FORMAT('CONTINUE', 'END');
       break;
 
     case 'close':

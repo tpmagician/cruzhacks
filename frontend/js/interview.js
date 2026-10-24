@@ -1,13 +1,16 @@
 // Interview state machine:
 //   intro → behavioral → technical → candidate_questions → wrapup → report
+// After the last main question the interviewer asks "Do you have any questions for me?"
+// and keeps answering until the candidate says they have none; then it closes and the
+// report opens.
 // The app (not the model) owns the structure: which round we're in, how many
 // main questions have been asked, and how many follow-ups each question has had.
 import { combineDeliveries } from './delivery-metrics.js';
 import { hintsLeftToday, useHint } from './hints.js';
+import { pickProblems } from './problems.js';
 
 export const LENGTHS = { short: 3, standard: 5, long: 8 };
 export const MAX_FOLLOWUPS = 2;
-export const MAX_CANDIDATE_QUESTIONS = 3;
 
 const OPENING_CUE = '(The candidate has joined the video call and is ready to begin.)';
 const HINT_REQUEST = "I'm stuck. Could I get a small hint?";
@@ -116,16 +119,24 @@ function behavioralPlan(n) {
   return topics.slice(0, n).map((topic) => ({ round: 'behavioral', type: 'behavioral', topic }));
 }
 
-function technicalPlan(category, n) {
+function technicalPlan(category, n, level) {
   const { special, pool } = TECHNICAL[category];
-  const slots = special ? (n >= 8 ? [2, 5] : [Math.floor(n / 2)]) : [];
+  // LeetCode-style problems: two in rounds of 5+ questions, otherwise one, spread through the round.
+  const slots = !special ? [] : n >= 5 ? [Math.floor(n / 3), Math.floor((2 * n) / 3)] : [Math.floor(n / 2)];
+  const problems = special ? pickProblems(special.type, slots.length, level) : [];
   const poolTopics = shuffle(pool.topics);
   const plan = [];
   let s = 0;
   let p = 0;
   for (let i = 0; i < n; i++) {
-    if (slots.includes(i)) plan.push({ round: 'technical', type: special.type, topic: special.topics[s++ % special.topics.length] });
-    else plan.push({ round: 'technical', type: pool.type, topic: poolTopics[p++ % poolTopics.length] });
+    if (slots.includes(i)) {
+      const problem = problems[s];
+      const topic = problem ? problem.pattern : special.topics[s % special.topics.length];
+      plan.push({ round: 'technical', type: special.type, topic, problem });
+      s++;
+    } else {
+      plan.push({ round: 'technical', type: pool.type, topic: poolTopics[p++ % poolTopics.length] });
+    }
   }
   return plan;
 }
@@ -137,7 +148,7 @@ function buildPlans(setup) {
   } else {
     const n = LENGTHS[setup.length] ?? LENGTHS.standard;
     if (setup.rounds.includes('behavioral')) plans.behavioral = behavioralPlan(n);
-    if (setup.rounds.includes('technical')) plans.technical = technicalPlan(roleCategory(setup.role), n);
+    if (setup.rounds.includes('technical')) plans.technical = technicalPlan(roleCategory(setup.role), n, setup.level);
   }
   const rounds = ['behavioral', 'technical'].filter((r) => plans[r]?.length);
   return { rounds, plans };
@@ -164,7 +175,6 @@ export class InterviewSession {
     this.qIdx = -1;
     this.followups = 0;
     this.lastKind = null; // 'question' | 'followup' | 'hint' | 'cq' | 'close'
-    this.cqCount = 0;
     this.done = false;
 
     this.history = []; // [{ role: 'user' | 'model', text }]
@@ -242,7 +252,7 @@ export class InterviewSession {
 
   _ref(action, round, idx) {
     const item = this.plans[round][idx];
-    return { action, round, number: idx + 1, total: this.plans[round].length, type: item.type, topic: item.topic, retryText: item.retryText };
+    return { action, round, number: idx + 1, total: this.plans[round].length, type: item.type, topic: item.topic, problem: item.problem, retryText: item.retryText };
   }
 
   _advance(next, res) {
@@ -347,15 +357,14 @@ export class InterviewSession {
     }
     const display = { text: coding ? explanation.trim() : userText, code: includesCode ? code : '' };
 
+    // No limit: the interviewer keeps answering until the candidate says they're done (ACTION: END).
     if (this.stage === 'candidate_questions') {
-      const final = this.cqCount + 1 >= MAX_CANDIDATE_QUESTIONS;
       return {
         display,
-        payload: this._payload('candidate_questions', { final }, userText),
+        payload: this._payload('candidate_questions', {}, userText),
         commit: (res) => {
           this._push(userText, res.text);
-          this.cqCount++;
-          if (final || res.action === 'END') this._finish();
+          if (res.action === 'END') this._finish();
         },
       };
     }
