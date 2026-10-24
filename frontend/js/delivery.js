@@ -1,7 +1,11 @@
 // Live delivery tracking during the interview (MACH-style): the webcam feeds a face
 // worker (smiles, nods, head direction) and the microphone feeds prosody analysis
 // (pauses, pitch, loudness). Everything runs on this device; only the derived
-// numbers are sent to the server with the transcript for feedback.
+// numbers are sent to the server with the transcript for feedback. The one
+// exception: a spoken answer's audio is sent for a verbatim transcript, because
+// browser dictation drops most "um"s and "uh"s; when it returns, its filler
+// counts replace the dictated ones. Nothing is stored.
+import { api } from './api.js';
 import {
   summarizeAudio, summarizeFace, headBaseline, detectHeadGestures, countFillers, countWords, rmsDb, detectPitch,
 } from './delivery-metrics.js';
@@ -9,6 +13,9 @@ import {
 const FACE_FPS = 15;
 const AUDIO_MS = 50;
 const PITCH_FLOOR_DB = -60;
+const PCM_RATE = 16000;
+const MAX_ANSWER_SEC = 300; // cap per-answer audio (~9.6 MB of WAV)
+const MIN_AUDIO_SEC = 2;
 
 const CAMERA_ERRORS = {
   NotAllowedError: 'Camera permission was denied, so smile and head-movement feedback is off.',
@@ -41,6 +48,7 @@ export class DeliveryTracker {
     this.segment = null;
     this.usedCamera = false;
     this.usedMic = false;
+    this.pending = new Set(); // verbatim transcriptions in flight
   }
 
   get running() {
@@ -120,6 +128,16 @@ export class DeliveryTracker {
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 2048;
         source.connect(analyser);
+        // Raw samples for the verbatim transcript. The processor only runs while
+        // connected to the output, so route it through a muted gain node.
+        const proc = ctx.createScriptProcessor(4096, 1, 1);
+        const mute = ctx.createGain();
+        mute.gain.value = 0;
+        source.connect(proc);
+        proc.connect(mute).connect(ctx.destination);
+        proc.onaudioprocess = (e) => {
+          if (this.segment) this._pushPcm(this.segment, e.inputBuffer.getChannelData(0), ctx.sampleRate);
+        };
         await ctx.resume().catch(() => {});
         this.audioStream = audioStream;
         this.audioCtx = ctx;
@@ -244,7 +262,7 @@ export class DeliveryTracker {
   beginSegment(key = null) {
     if (this.t0 == null) return;
     const start = this.now();
-    this.segment = { key, start, audio: [], typing: [] };
+    this.segment = { key, start, audio: [], typing: [], pcm: [], pcmLen: 0, pcmPos: 0 };
     if (key && !this.marks.some((m) => m.key === key)) this.marks.push({ key, t: start });
   }
 
@@ -265,7 +283,7 @@ export class DeliveryTracker {
     this.segment = null;
     if (!seg) return null;
     const face = this.faceFrames.filter((f) => f.t >= seg.start && f.phase === 'answer');
-    return {
+    const part = {
       key: seg.key,
       audio: this.usedMic && seg.audio.length >= 20
         ? summarizeAudio(seg.audio, { spokenText, typing: seg.typing, thinkAloud })
@@ -274,6 +292,44 @@ export class DeliveryTracker {
       fillers: countFillers(text),
       words: countWords(text),
     };
+    // Only spoken answers are transcribed; typed text keeps its own counts.
+    if (countWords(spokenText) && seg.pcmLen >= PCM_RATE * MIN_AUDIO_SEC) this._transcribe(part, encodeWav(seg.pcm, seg.pcmLen));
+    return part;
+  }
+
+  /** Resamples to 16 kHz 16-bit and appends to the answer's audio. */
+  _pushPcm(seg, input, rate) {
+    if (seg.pcmLen >= PCM_RATE * MAX_ANSWER_SEC) return;
+    const step = rate / PCM_RATE;
+    const out = new Int16Array(Math.ceil((input.length - seg.pcmPos) / step));
+    let n = 0;
+    let t = seg.pcmPos;
+    for (; t < input.length; t += step) {
+      const x = Math.max(-1, Math.min(1, input[Math.floor(t)]));
+      out[n++] = x < 0 ? x * 0x8000 : x * 0x7fff;
+    }
+    seg.pcmPos = t - input.length;
+    seg.pcm.push(out.subarray(0, n));
+    seg.pcmLen += n;
+  }
+
+  /** Replaces the answer's dictated filler counts with verbatim ones when they arrive. */
+  _transcribe(part, wav) {
+    const job = api.transcribe(wav)
+      .then(({ text }) => {
+        if (!text) return;
+        part.fillers = countFillers(text);
+        part.words = countWords(text);
+      })
+      .catch((err) => console.warn('Verbatim transcription failed; using dictated filler counts.', err))
+      .finally(() => this.pending.delete(job));
+    this.pending.add(job);
+  }
+
+  /** Waits (up to `ms`) for verbatim transcriptions still in flight. */
+  async settle(ms = 60000) {
+    if (!this.pending.size) return;
+    await Promise.race([Promise.allSettled([...this.pending]), new Promise((r) => setTimeout(r, ms))]);
   }
 
   cancelSegment() {
@@ -332,4 +388,31 @@ export class DeliveryTracker {
     this.audioCtx = null;
     this.analyser = null;
   }
+}
+
+/** 16 kHz mono 16-bit PCM chunks -> WAV blob. */
+function encodeWav(chunks, length) {
+  const view = new DataView(new ArrayBuffer(44 + length * 2));
+  const str = (o, text) => [...text].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF');
+  view.setUint32(4, 36 + length * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, PCM_RATE, true);
+  view.setUint32(28, PCM_RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  str(36, 'data');
+  view.setUint32(40, length * 2, true);
+  let o = 44;
+  for (const chunk of chunks) {
+    for (const v of chunk) {
+      view.setInt16(o, v, true);
+      o += 2;
+    }
+  }
+  return new Blob([view], { type: 'audio/wav' });
 }

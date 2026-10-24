@@ -15,9 +15,16 @@ const STAGE_LABEL = {
   wrapup: 'Wrap-up',
 };
 
+const ON_SCREEN = 'Out loud, introduce the problem in one or two sentences and tell them the full statement with examples is on their screen; do not read the statement, examples, or constraints aloud. Then write the full problem in the <problem> block described below.';
+
+export const isProblemType = (type) => type === 'coding' || type === 'sql';
+
 function questionGuidance(q, setup) {
   if (q.retryText) {
-    return `Ask the candidate this question again. You may rephrase it naturally, but keep the same substance (if it describes a coding or SQL problem, keep the problem identical): "${q.retryText}"`;
+    if (isProblemType(q.type)) {
+      return `Present this same problem again, keeping the problem, examples, and constraints identical. ${ON_SCREEN} The original problem: "${q.retryText}"`;
+    }
+    return `Ask the candidate this question again. You may rephrase it naturally, but keep the same substance: "${q.retryText}"`;
   }
   const level = setup.level.toLowerCase();
   switch (q.type) {
@@ -26,9 +33,9 @@ function questionGuidance(q, setup) {
     case 'conceptual':
       return `Ask one conceptual technical question about ${q.topic}, pitched at a ${level}-level ${setup.role}. It should invite reasoning and tradeoffs, not trivia.`;
     case 'coding':
-      return `Present one self-contained coding problem (${q.topic}) that a ${level}-level candidate could solve in about 15 to 20 minutes. In plain spoken sentences, state the problem, give one small example input and output, and mention constraints. Ask them to write their solution in the code editor and to explain their approach and its time and space complexity.`;
+      return `Present one self-contained, LeetCode-style coding problem (${q.topic}) that a ${level}-level candidate could solve in about 15 to 20 minutes. ${ON_SCREEN} Ask them to write their solution in the code editor and to explain their approach and its time and space complexity.`;
     case 'sql':
-      return `Present one SQL problem focused on ${q.topic}. Describe a small schema in a sentence or two (table names and their key columns), then ask for a query that answers a realistic business question. Ask them to write it in the editor and explain their approach.`;
+      return `Present one LeetCode-style SQL problem focused on ${q.topic}, built on a small schema of one to three tables that answers a realistic business question. ${ON_SCREEN} Ask them to write the query in the editor and explain their approach.`;
     case 'product':
       return `Ask one product-management question about ${q.topic}, framed as a realistic scenario for a ${level}-level ${setup.role}.`;
     default:
@@ -53,7 +60,7 @@ function persona(setup) {
 }
 
 const SPEAKING_RULES = `How you speak:
-- Reply with only the words you say out loud to the candidate. No stage directions, no actions in asterisks or brackets, no headings, no markdown, no bullet or numbered lists, no speaker labels.
+- Reply with only the words you say out loud to the candidate. No stage directions, no actions in asterisks or brackets, no headings, no markdown, no bullet or numbered lists, no speaker labels. The one exception is a <problem> block when you are told to write one.
 - Ask at most one question per reply.
 - Keep replies short and natural, usually two to four sentences. A coding or SQL problem statement may be longer.
 - Never give feedback, scores, grades, or opinions on how well the candidate is doing. Neutral acknowledgments such as "Thanks, that's helpful" are fine; praise and critique are not.
@@ -63,14 +70,110 @@ const SPEAKING_RULES = `How you speak:
 function stateBlock(turn) {
   const lines = [`- Stage: ${STAGE_LABEL[turn.stage] ?? turn.stage}`];
   if (turn.stage === 'behavioral' || turn.stage === 'technical') {
-    lines.push(`- Progress: ${ROUND_LABEL[turn.stage]} question ${turn.questionNumber} of ${turn.totalQuestions}; follow-ups asked on this question so far: ${turn.followupsUsed} of ${turn.maxFollowups}.`);
+    lines.push(`- Progress: ${ROUND_LABEL[turn.stage]} question ${turn.questionNumber} of ${turn.totalQuestions}; follow-ups asked on this question so far: ${turn.followupsUsed} of ${turn.maxFollowups}${turn.stage === 'technical' ? `; hints given on this question: ${turn.hintsUsed}; hints the candidate has left today: ${turn.hintsLeftToday}` : ''}.`);
     if (turn.current?.topic) lines.push(`- Current question focus: ${turn.current.topic} (${turn.current.type}).`);
   }
   return `Interview state:\n${lines.join('\n')}`;
 }
 
-const ACTION_FORMAT = (a, b) =>
-  `Output format: the first line of your reply must be exactly "ACTION: ${a}" or "ACTION: ${b}". Put what you say to the candidate on the following lines. The candidate never sees the ACTION line.`;
+const PROBLEM_EXAMPLE = {
+  coding: `<problem>
+Title: Longest Balanced Substring
+Difficulty: Medium
+Description:
+Given a string \`s\` consisting only of the characters \`'a'\` and \`'b'\`, return the length of the longest substring that contains an equal number of \`'a'\` and \`'b'\` characters.
+
+A substring is a contiguous, non-empty sequence of characters within a string.
+Example 1:
+Input: s = "aabab"
+Output: 4
+Explanation: The substring "abab" has two 'a' and two 'b' characters.
+Example 2:
+Input: s = "aaa"
+Output: 0
+Explanation: No substring has equal counts, so we return 0.
+Constraints:
+- \`1 <= s.length <= 10^5\`
+- \`s[i]\` is either \`'a'\` or \`'b'\`.
+</problem>`,
+  sql: `<problem>
+Title: Top Customer per City
+Difficulty: Medium
+Schema:
+Table: Customers
++-------------+---------+
+| Column Name | Type    |
++-------------+---------+
+| id          | int     |
+| name        | varchar |
+| city        | varchar |
++-------------+---------+
+id is the primary key for this table.
+
+Table: Orders
++-------------+---------+
+| Column Name | Type    |
++-------------+---------+
+| id          | int     |
+| customer_id | int     |
+| amount      | int     |
++-------------+---------+
+id is the primary key. customer_id is a foreign key to Customers.id.
+Description:
+Write a solution to find, for each city, the customer with the highest total order \`amount\`. Return the result table in any order.
+Example 1:
+Input:
+Customers table:
++----+-------+--------+
+| id | name  | city   |
++----+-------+--------+
+| 1  | Ana   | Austin |
+| 2  | Ben   | Austin |
++----+-------+--------+
+Orders table:
++----+-------------+--------+
+| id | customer_id | amount |
++----+-------------+--------+
+| 1  | 1           | 50     |
+| 2  | 2           | 80     |
++----+-------------+--------+
+Output:
++--------+------+
+| city   | name |
++--------+------+
+| Austin | Ben  |
++--------+------+
+Explanation: Ben's total of 80 is the highest in Austin.
+</problem>`,
+};
+
+function problemFormat(type) {
+  const sql = type === 'sql';
+  return `On-screen problem format: when this reply presents a new ${sql ? 'SQL' : 'coding'} problem, put your short spoken lines first, then the complete problem written like a LeetCode problem page inside <problem> and </problem> tags, exactly in the format below. The speaking rules do not apply inside the block.
+- Section labels, each on its own line: Title, Difficulty (Easy, Medium, or Hard), ${sql ? 'Schema (each table as an ASCII column table), ' : ''}Description, Example 1, Example 2 (optionally Example 3), Constraints${sql ? ' (optional)' : ''}, and optionally Follow-up.
+- Every example has an Input line, an Output line, and usually an Explanation line. ${sql ? 'Example inputs and outputs are small ASCII tables.' : 'Inputs use the exact parameter names from the description, for example: nums = [1,2,3], k = 2.'}
+- Wrap identifiers and literal values in backticks in the description and constraints.
+- Trace every example by hand and make sure each Output is exactly correct.
+- Write a new problem that fits the requested topic; the one below only shows the format.
+- If this reply does not present a new problem, do not write a <problem> block.
+
+${PROBLEM_EXAMPLE[type]}`;
+}
+
+const ACTION_FORMAT = (...actions) =>
+  `Output format: the first line of your reply must be exactly one of ${actions.map((a) => `"ACTION: ${a}"`).join(', ')}. Put what you say to the candidate on the following lines. The candidate never sees the ACTION line.`;
+
+// Each hint on a question is a little stronger than the last.
+const HINT_LEVELS = [
+  'a gentle nudge: a guiding question, a small example to try by hand, or a simpler sub-case to start from',
+  'a pointer toward the right technique, data structure, or SQL construct, without describing the full algorithm or query',
+  'the key idea of a working approach in one or two sentences, leaving the steps, code, and edge cases to them',
+];
+
+function hintGuidance(turn) {
+  const n = Math.min((turn.hintsUsed ?? 0) + 1, HINT_LEVELS.length);
+  return `This is hint ${n} on this question, so make it ${HINT_LEVELS[n - 1]}. Build on what they have already said or written and on any earlier hints; do not repeat a hint. Never give the full solution or write code for them. Keep it to two or three sentences, then invite them to keep going. Stay on this same question.`;
+}
 
 /** Returns { systemInstruction, expectsAction, thinking } for one interviewer turn. */
 export function buildInterviewerTurn(setup, turn) {
@@ -103,16 +206,23 @@ export function buildInterviewerTurn(setup, turn) {
         const vague = isTechnical
           ? 'hand-wavy, incorrect, missing key reasoning, or skips complexity or edge cases'
           : 'vague, generic, hypothetical instead of a real example, missing their own role, or missing the outcome';
+        // On technical questions, a clearly stuck candidate gets a hint rather than a follow-up.
+        const canHint = isTechnical && turn.hintsLeftToday > 0;
+        const hintOption = canHint
+          ? `\nIf the candidate says they are stuck or don't know, or their answer shows they are lost on the core idea (not just missing a detail), help them get unstuck. ${hintGuidance(turn)} Begin with ACTION: HINT.`
+          : '';
         directive = `The candidate just responded. Decide what a thoughtful interviewer would do next.
-If the answer is ${vague}, either push back politely or ask one follow-up that digs into the weakest part, such as ${digDeeper}. Do not repeat a follow-up you already asked. Begin with ACTION: FOLLOW_UP.
+If the answer is ${vague}, either push back politely or ask one follow-up that digs into the weakest part, such as ${digDeeper}. Do not repeat a follow-up you already asked. Begin with ACTION: FOLLOW_UP.${hintOption}
 If the answer is complete enough to move on, give a brief neutral acknowledgment and then ${describeNext(turn.next, setup)} Begin with ACTION: NEXT.${codeNote}`;
-        format = ACTION_FORMAT('FOLLOW_UP', 'NEXT');
+        format = canHint ? ACTION_FORMAT('FOLLOW_UP', 'HINT', 'NEXT') : ACTION_FORMAT('FOLLOW_UP', 'NEXT');
       }
       break;
     }
 
     case 'hint':
-      directive = `The candidate says they are stuck on the current problem. Give one small hint that nudges them in a productive direction: a question to consider, a data structure or technique to think about, or a simpler sub-case to start from. Do not give the solution, code, or the full algorithm. Then invite them to keep going. Stay on this same question.`;
+      directive = turn.idleSeconds
+        ? `The candidate has gone quiet for about ${turn.idleSeconds} seconds on the current question and seems stuck. Check in warmly and briefly, the way a supportive interviewer would (for example, "Let me throw you a small nudge"), then give a hint. ${hintGuidance(turn)}`
+        : `The candidate says they are stuck on the current problem. ${hintGuidance(turn)}`;
       break;
 
     case 'candidate_questions':
@@ -134,7 +244,12 @@ If they said they have no more questions or are ready to finish, close the inter
       throw new Error(`Unknown turn kind: ${turn.kind}`);
   }
 
-  const systemInstruction = [persona(setup), SPEAKING_RULES, stateBlock(turn), `What to do now:\n${directive}`, format]
+  // Presenting a coding or SQL problem: ask for the on-screen block, and think harder so the examples are right.
+  const presents = (turn.kind === 'open' || turn.kind === 'answer') && isProblemType(turn.next?.type);
+  if (presents) thinking = 'high';
+  const problem = presents ? problemFormat(turn.next.type) : '';
+
+  const systemInstruction = [persona(setup), SPEAKING_RULES, stateBlock(turn), `What to do now:\n${directive}`, problem, format]
     .filter(Boolean)
     .join('\n\n');
 
@@ -146,7 +261,7 @@ If they said they have no more questions or are ready to finish, close the inter
 
 export const EVALUATOR_INSTRUCTION = `You are a rigorous, fair interview coach. You evaluate mock interview transcripts and return strict JSON only: no markdown, no code fences, no commentary before or after the JSON.
 
-Scoring scale (integers only): 1 = poor or no real answer, 2 = weak, 3 = adequate, 4 = strong, 5 = exceptional. Be calibrated to the candidate's stated level and do not inflate scores. Base every judgment on what the candidate actually said or wrote. Hints used on a technical question should lower its scores somewhat.`;
+Scoring scale (integers only): 1 = poor or no real answer, 2 = weak, 3 = adequate, 4 = strong, 5 = exceptional. Be calibrated to the candidate's stated level and do not inflate scores. Base every judgment on what the candidate actually said or wrote. Hints used on a technical question should lower its scores somewhat; hints escalate (1 = gentle nudge, 2 = points to the technique, 3 = gives the key idea), so later hints should lower correctness and approach more. Recovering well after a gentle nudge is still a reasonable showing.`;
 
 function formatDuration(seconds) {
   if (!seconds) return 'not recorded';

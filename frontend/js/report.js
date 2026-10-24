@@ -17,6 +17,62 @@ export function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
+// ---------------------------------------------------------------------------
+// LeetCode-style problem statement
+
+/** Escapes, then renders `code` spans and 10^4-style exponents. */
+function inline(s) {
+  return escapeHtml(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/(\d)\^(-?\d+)/g, '$1<sup>$2</sup>');
+}
+
+function paragraphs(s) {
+  return s
+    .split(/\n\s*\n/)
+    .map((para) => `<p>${inline(para.trim()).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+
+function exampleHtml(ex, i) {
+  const field = (label, v) => {
+    if (!v) return '';
+    const sep = v.includes('\n') ? '\n' : ' ';
+    return `<strong>${label}:</strong>${sep}${escapeHtml(v)}\n`;
+  };
+  return `
+    <p class="pb-label"><strong>Example ${i + 1}:</strong></p>
+    <pre class="pb-example${/\+-{2,}/.test(ex.input + ex.output) ? ' pb-table' : ''}">${field('Input', ex.input)}${field('Output', ex.output)}${field('Explanation', ex.explanation)}</pre>`;
+}
+
+function constraintHtml(c) {
+  // LeetCode shows bare bounds like "1 <= n <= 10^5" in code style.
+  const bare = !c.includes('`') && /[<>=^]/.test(c);
+  return `<li>${bare ? `<code>${inline(c)}</code>` : inline(c)}</li>`;
+}
+
+/** @param {{ title, difficulty, schema, description, examples, constraints, followUp }} p */
+export function renderProblem(p) {
+  const diff = p.difficulty ? `<span class="pb-diff pb-${p.difficulty.toLowerCase()}">${escapeHtml(p.difficulty)}</span>` : '';
+  return `
+    <div class="pb-head">
+      <h3 class="pb-title">${escapeHtml(p.title || 'Problem')}</h3>
+      ${diff}
+    </div>
+    ${p.schema ? `<pre class="pb-schema">${escapeHtml(p.schema)}</pre>` : ''}
+    <div class="pb-desc">${paragraphs(p.description)}</div>
+    ${p.examples.map(exampleHtml).join('')}
+    ${p.constraints.length ? `<p class="pb-label"><strong>Constraints:</strong></p><ul class="pb-constraints">${p.constraints.map(constraintHtml).join('')}</ul>` : ''}
+    ${p.followUp ? `<p class="pb-label"><strong>Follow-up:</strong> ${inline(p.followUp)}</p>` : ''}`;
+}
+
+/** Strips the problem block from stored interviewer text for plain display. */
+function spoken(text) {
+  return String(text ?? '').replace(/\s*<problem>[\s\S]*?(?:<\/problem>|$)/i, '').trim();
+}
+
+// ---------------------------------------------------------------------------
+
 function scoreBadge(v) {
   return v == null
     ? '<span class="score score-none">unable to score</span>'
@@ -38,7 +94,7 @@ function transcriptHtml(rec) {
     .slice(1)
     .map((t) => {
       const who = t.speaker === 'interviewer' ? 'Interviewer' : 'You';
-      return `<div class="rq-turn rq-${t.speaker}"><strong>${who}:</strong> ${escapeHtml(t.text)}</div>`;
+      return `<div class="rq-turn rq-${t.speaker}"><strong>${who}:</strong> ${escapeHtml(spoken(t.text))}</div>`;
     })
     .join('');
 }
@@ -145,7 +201,10 @@ function questionHtml(rec, q) {
   return `
     <article class="card rq">
       <div class="rq-meta">${meta}</div>
-      <h3 class="rq-question">${escapeHtml(rec.question)}</h3>
+      ${rec.problem
+        ? `<h3 class="rq-question">${escapeHtml(rec.problem.title || 'Coding problem')}</h3>
+           <details><summary>Problem statement</summary><div class="problem">${renderProblem(rec.problem)}</div></details>`
+        : `<h3 class="rq-question">${escapeHtml(spoken(rec.question))}</h3>`}
       <details>
         <summary>Your answer${rec.turns.length > 2 ? ' and follow-ups' : ''}</summary>
         <div class="rq-transcript">${transcriptHtml(rec)}</div>

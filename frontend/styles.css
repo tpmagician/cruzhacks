@@ -14,6 +14,9 @@
   --danger: #a12a2a;
   --notice-bg: #fff6e0;
   --code-bg: #f1f3f6;
+  --diff-easy: #1a7f4b;
+  --diff-medium: #a86400;
+  --diff-hard: #c0353a;
   color-scheme: light;
 }
 
@@ -32,6 +35,9 @@
     --danger: #f1a3a3;
     --notice-bg: #3a321c;
     --code-bg: #10141a;
+    --diff-easy: #4cc38a;
+    --diff-medium: #f0b44c;
+    --diff-hard: #f27a7e;
     color-scheme: dark;
   }
 }
@@ -50,6 +56,9 @@
   --danger: #f1a3a3;
   --notice-bg: #3a321c;
   --code-bg: #10141a;
+  --diff-easy: #4cc38a;
+  --diff-medium: #f0b44c;
+  --diff-hard: #f27a7e;
   color-scheme: dark;
 }
 
@@ -235,4 +244,34 @@ details summary { cursor: pointer; color: var(--accent); margin: 4px 0; }
   .rq-grid { grid-template-columns: 1fr; }
   .bubble { max-width: 100%; }
   .msg-interviewer .bubble { max-width: calc(100% - 44px); }
+}
+
+/* LeetCode-style problem statement */
+.problem { font-size: 0.95rem; }
+.transcript > .problem { margin: 0 0 0 44px; }
+.pb-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.pb-title { font-size: 1.15rem; margin: 0; }
+.pb-diff { font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); }
+.pb-easy { color: var(--diff-easy); }
+.pb-medium { color: var(--diff-medium); }
+.pb-hard { color: var(--diff-hard); }
+.pb-desc p { margin: 0 0 12px; }
+.problem code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; font-size: 0.85em;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px;
+}
+.pb-label { margin: 16px 0 6px; }
+.pb-example, .pb-schema {
+  font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; font-size: 0.85rem;
+  white-space: pre; overflow-x: auto; margin: 0 0 4px; padding: 8px 14px;
+  background: var(--code-bg); border-radius: 0 8px 8px 0;
+}
+.pb-example { border-left: 3px solid var(--border); white-space: pre-wrap; }
+.pb-example strong { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.pb-example.pb-table { white-space: pre; }
+.pb-schema { border-radius: 8px; margin-bottom: 12px; }
+.pb-constraints { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 600px) {
+  .transcript > .problem { margin-left: 0; }
 }

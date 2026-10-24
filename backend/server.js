@@ -12,6 +12,7 @@ import {
   buildEvaluationPrompt,
 } from './prompts.js';
 import { parseInterviewerReply, tryParseJson, normalizeEvaluation } from './parse.js';
+import { transcribeVerbatim, transcriberName } from './transcribe.js';
 import { FILLER_KEYS } from '../frontend/js/delivery-metrics.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,7 +63,7 @@ function cleanQuestionRef(q) {
     total: int(q.total, 1, 20),
     type: TYPES.includes(q.type) ? q.type : 'domain',
     topic: clip(q.topic, 200),
-    retryText: clip(q.retryText, 4000) || undefined,
+    retryText: clip(q.retryText, 8000) || undefined,
   };
 }
 
@@ -75,6 +76,9 @@ function cleanTurn(t = {}) {
     totalQuestions: int(t.totalQuestions, 0, 20),
     followupsUsed: int(t.followupsUsed, 0, 5),
     maxFollowups: int(t.maxFollowups, 0, 5, 2),
+    hintsUsed: int(t.hintsUsed, 0, 10),
+    hintsLeftToday: int(t.hintsLeftToday, 0, 10),
+    idleSeconds: int(t.idleSeconds, 0, 3600),
     forced: Boolean(t.forced),
     final: Boolean(t.final),
     includesCode: Boolean(t.includesCode),
@@ -170,7 +174,7 @@ function cleanRecords(records) {
 
 app.get('/api/health', (_req, res) => {
   const key = (process.env.GEMINI_API_KEY || '').trim();
-  res.json({ ok: true, hasKey: Boolean(key && key !== 'your_api_key_here'), models: MODELS });
+  res.json({ ok: true, hasKey: Boolean(key && key !== 'your_api_key_here'), models: MODELS, transcriber: transcriberName() });
 });
 
 app.post('/api/interview', async (req, res) => {
@@ -180,10 +184,21 @@ app.post('/api/interview', async (req, res) => {
   const { systemInstruction, expectsAction, thinking } = buildInterviewerTurn(setup, turn);
 
   const raw = await generate({ model: setup.model, systemInstruction, contents, thinking, temperature: 0.8 });
-  const { text, action } = parseInterviewerReply(raw, INTERVIEWER_NAME);
+  const parsed = parseInterviewerReply(raw, INTERVIEWER_NAME);
+  const { action, problem } = parsed;
+  const text = parsed.text || (problem ? "Here's the next problem. Take a moment to read it on your screen." : '');
   if (!text) throw new AppError(502, 'EMPTY_RESPONSE', 'The interviewer returned an empty reply. Please retry.');
 
-  res.json({ text, action: expectsAction ? action : null, thinking });
+  res.json({ text, action: expectsAction ? action : null, problem, thinking });
+});
+
+// Verbatim transcript of one answer's audio (WAV), used to count filler words.
+app.post('/api/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '20mb' }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length < 1000) {
+    throw new AppError(400, 'BAD_REQUEST', 'No audio received.');
+  }
+  const mimeType = clip(req.get('content-type'), 100) || 'audio/wav';
+  res.json(await transcribeVerbatim(req.body, mimeType));
 });
 
 app.post('/api/evaluate', async (req, res) => {

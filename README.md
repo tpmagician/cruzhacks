@@ -31,8 +31,17 @@ lacked: understanding the content of your answers and tying delivery to it.
   Google Chrome or Edge; Chrome sends that audio to Google to transcribe it).
   Press **Send** or Ctrl+Enter when you finish. **Esc** or **Skip** interrupts Jordan.
 - **Delivery feedback.** Your camera and microphone are analyzed on this device
-  while you answer. No video or audio is recorded or uploaded; only the numbers
-  below go to Gemma with your transcript.
+  while you answer. Video never leaves the device. Browser dictation drops most
+  "um"s and "uh"s, so the audio of each spoken answer is sent to Gemini (or
+  Deepgram, if `DEEPGRAM_API_KEY` is set) for a word-for-word transcript used
+  only to count filler words; the app does not store it. Only the numbers below
+  go to Gemma with your transcript.
+- **Hints.** On technical questions you can press **I'm stuck**, and Jordan
+  offers one on its own after a quiet stretch (90 s, or 150 s on coding and SQL
+  problems). Hints get stronger each time (nudge, technique, key idea) and are
+  limited to 3 per day per browser; the evaluator weighs them in scoring.
+- **On-screen problems.** Coding and SQL questions appear as a LeetCode-style
+  statement with examples and constraints; Jordan only introduces them aloud.
 
 | Signal | How it is measured | Source |
 | --- | --- | --- |
@@ -40,7 +49,7 @@ lacked: understanding the content of your answers and tying delivery to it.
 | Head nods / shakes | Stable/extreme/transient states over ±2 frames on the between-the-eyes point, 2 px rule (rescaled to face size), more than two extremes between stable states | MACH algorithm |
 | Pauses | -25 dB silence threshold relative to the loudest frame, 0.5 s minimum silent and sounding intervals | MACH (Praat settings) |
 | Pitch variation | Autocorrelation pitch (100–500 Hz), standard deviation in semitones | MACH (autocorrelation) |
-| Pace, fillers | Words per minute from the dictated transcript; filler words as a share of words | MACH "weak language" |
+| Pace, fillers | Words per minute from the dictated transcript; filler words as a share of words, counted from the word-for-word transcript when it is available (otherwise from dictation, which undercounts "um"/"uh") | MACH "weak language" |
 | Looking away, time to first word, nods while listening | Head direction vs. your median position; silence before speech; nods outside your answers | Added |
 | Talking speed | Words per minute of actual sound, pauses excluded (articulation rate) | Speeko-style |
 | Rising endings (uptalk) | Last 0.4 s of a phrase (≥1 s long) is 2.5+ semitones above the rest of the phrase; octave jumps ignored | Speeko-style |

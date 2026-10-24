@@ -1,6 +1,6 @@
 import { InterviewSession, STAR_TIP } from './interview.js';
 import { api } from './api.js';
-import { renderReport, escapeHtml } from './report.js';
+import { renderReport, renderProblem, escapeHtml } from './report.js';
 import { PresentationPractice } from './presentation.js';
 import { Dictation, Speaker, voiceSupport } from './voice.js';
 import { DeliveryTracker } from './delivery.js';
@@ -121,6 +121,11 @@ function selectMode(mode) {
 $('#mode-interview').addEventListener('click', () => selectMode('interview'));
 $('#mode-presentation').addEventListener('click', () => selectMode('presentation'));
 
+// Proactive hints: if the candidate goes quiet on a technical question, the interviewer checks in.
+const QUIET_BEFORE_HINT = { coding: 150, sql: 150, other: 90 }; // seconds
+let lastActivityAt = Date.now();
+let lastInputSnapshot = '';
+
 // ---------------------------------------------------------------------------
 // Theme (per-viewer convenience only)
 
@@ -158,6 +163,7 @@ function show(name) {
 async function checkHealth() {
   try {
     const h = await api.health();
+    if (h.transcriber === 'deepgram') $('#transcriber').textContent = 'Deepgram';
     if (!h.hasKey) {
       els.keyWarning.hidden = false;
       els.keyWarning.textContent =
@@ -197,6 +203,7 @@ els.setupForm.addEventListener('submit', (e) => {
     timer: f.get('timer') === 'on',
     voice: f.get('voice') === 'on',
     delivery: f.get('delivery') === 'on',
+    autoHints: f.get('autoHints') === 'on',
   });
 });
 
@@ -245,7 +252,7 @@ async function startTracker() {
   els.micMeterWrap.hidden = !state.mic;
   const on = [state.camera && 'camera', state.mic && 'microphone'].filter(Boolean);
   els.deliveryNotice.textContent = [
-    on.length ? `Measuring delivery with your ${on.join(' and ')}. Nothing is recorded.` : '',
+    on.length ? `Measuring delivery with your ${on.join(' and ')}. Nothing is saved.` : '',
     ...state.errors,
   ].filter(Boolean).join(' ');
   // The first question may have been waiting for the devices.
@@ -293,6 +300,7 @@ async function handOff(text) {
 function openFloor() {
   floorOpen = true;
   spokenText = '';
+  markActivity(); // the quiet clock starts when the candidate's turn opens
   tracker.beginSegment(currentKey());
   if (session.setup.voice && voiceSupport.dictation && !speechBlocked) dictation.start();
   else if (!speechBlocked) setVoiceStatus(session.setup.voice ? 'Type your answer, then press Send.' : '');
@@ -356,7 +364,7 @@ window.addEventListener('pagehide', finishMedia);
 // ---------------------------------------------------------------------------
 // Transcript
 
-function appendMessage(role, text, code = '') {
+function appendMessage(role, text, code = '', problem = null) {
   const wrap = document.createElement('div');
   wrap.className = `msg msg-${role}`;
   const avatar = role === 'interviewer' ? '<div class="avatar" aria-hidden="true">J</div>' : '';
@@ -369,6 +377,15 @@ function appendMessage(role, text, code = '') {
       ${code ? `<pre class="code-block">${escapeHtml(code)}</pre>` : ''}
     </div>`;
   els.transcript.append(wrap);
+  if (problem) {
+    const card = document.createElement('article');
+    card.className = 'card problem';
+    card.innerHTML = renderProblem(problem);
+    els.transcript.append(card);
+    // Land on the top of the statement, not the bottom.
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
   wrap.scrollIntoView({ behavior: 'smooth', block: 'end' });
 }
 
@@ -387,7 +404,7 @@ async function runTurn(prepared) {
   try {
     const res = await api.interview(prepared.payload);
     prepared.commit(res);
-    appendMessage('interviewer', res.text);
+    appendMessage('interviewer', res.text, '', res.problem);
     reply = res.text;
   } catch (err) {
     showError(err.message, () => runTurn(prepared));
@@ -445,12 +462,48 @@ async function sendAnswer() {
 }
 
 els.hintBtn.addEventListener('click', async () => {
-  if (busy || sending || !session?.inRound || !els.error.hidden) return;
+  if (busy || sending || !session?.canHint() || !els.error.hidden) return;
   await closeFloor();
   const prepared = session.prepareHint();
   appendMessage('candidate', prepared.display.text);
   runTurn(prepared);
 });
+
+function markActivity() {
+  lastActivityAt = Date.now();
+}
+
+/**
+ * Typing, dictation (including words still being recognized), and code edits all
+ * change the inputs; no change for a while on an open turn means they're stuck.
+ */
+function checkQuiet() {
+  if (!session?.setup.autoHints || busy || sending || speaking || !floorOpen || session.done
+    || !els.error.hidden || !session.canHint() || practiceMode !== 'interview') {
+    markActivity();
+    return;
+  }
+  const snapshot = `${els.answer.value}\u0000${els.code.value}\u0000${els.voiceInterim.textContent}`;
+  if (snapshot !== lastInputSnapshot) {
+    lastInputSnapshot = snapshot;
+    markActivity();
+    return;
+  }
+  const limit = QUIET_BEFORE_HINT[session.planItem?.type] ?? QUIET_BEFORE_HINT.other;
+  const quiet = Math.round((Date.now() - lastActivityAt) / 1000);
+  if (quiet >= limit) offerHint(quiet);
+}
+
+/** The interviewer checks in with a hint after a quiet stretch. */
+async function offerHint(idleSeconds) {
+  sending = true;
+  try {
+    await closeFloor();
+    runTurn(session.prepareHint({ idleSeconds }));
+  } finally {
+    sending = false;
+  }
+}
 
 els.endBtn.addEventListener('click', async () => {
   if (!session || busy) return;
@@ -494,6 +547,7 @@ function updateChrome() {
 
   els.hintBtn.hidden = !technical;
   const hints = session.record?.hintsUsed ?? 0;
+  els.hintBtn.textContent = session.canHint() ? `I'm stuck (${session.hintsLeft} hint${session.hintsLeft === 1 ? '' : 's'} left today)` : 'No hints left today';
   els.hintCount.textContent = technical && hints ? `${hints} hint${hints > 1 ? 's' : ''} used` : '';
 
   // Code editor belongs to one coding question; clear it when a new one starts.
@@ -514,6 +568,7 @@ function updateChrome() {
   els.finished.hidden = !session.done;
   els.endBtn.textContent = session.done ? 'Go to feedback' : 'End interview';
   for (const el of [els.answer, els.code, els.sendBtn, els.hintBtn]) el.disabled = busy;
+  if (!session.canHint()) els.hintBtn.disabled = true;
 
   els.micBtn.hidden = !session.setup.voice || !voiceSupport.dictation || session.done;
   els.micBtn.disabled = busy || (!floorOpen && !speaking);
@@ -525,6 +580,7 @@ function updateChrome() {
 function startTimer() {
   stopTimer();
   timerHandle = setInterval(() => {
+    checkQuiet();
     const s = session?.questionSeconds();
     if (s == null) return;
     els.timer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -610,6 +666,7 @@ async function loadReport() {
   els.retryWeakBtn.hidden = true;
   els.reportLoading.hidden = false;
   try {
+    await tracker.settle(); // let verbatim filler counts land first
     const result = await api.evaluate(session.evaluationPayload(lastSessionDelivery));
     lastReport = result.ok ? result.report : null;
     renderReport(els.report, session, result, lastSessionDelivery);

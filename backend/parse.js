@@ -1,7 +1,7 @@
 // Output cleanup for interviewer replies and defensive JSON parsing for evaluations.
 
-const ACTION_RE = /^[\s*_`"]*ACTION\s*[:\-]\s*[*_`"]*\s*(FOLLOW[_\s-]?UP|NEXT|END|CONTINUE)\b[*_`".]*\s*/i;
-const ACTION_ANYWHERE_RE = /[*_`"]*ACTION\s*:\s*[*_`"]*\s*(FOLLOW[_\s-]?UP|NEXT|END|CONTINUE)\b[*_`".]*/gi;
+const ACTION_RE = /^[\s*_`"]*ACTION\s*[:\-]\s*[*_`"]*\s*(FOLLOW[_\s-]?UP|NEXT|END|CONTINUE|HINT)\b[*_`".]*\s*/i;
+const ACTION_ANYWHERE_RE = /[*_`"]*ACTION\s*:\s*[*_`"]*\s*(FOLLOW[_\s-]?UP|NEXT|END|CONTINUE|HINT)\b[*_`".]*/gi;
 
 /** Splits the hidden ACTION tag from the spoken text and strips non-spoken artifacts. */
 export function parseInterviewerReply(raw, interviewerName) {
@@ -9,6 +9,14 @@ export function parseInterviewerReply(raw, interviewerName) {
 
   // Drop any leaked reasoning blocks.
   text = text.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
+
+  // Pull out the on-screen problem before the speech cleanup below mangles it.
+  let problem = null;
+  const block = text.match(/<problem>([\s\S]*?)(?:<\/problem>|$)/i);
+  if (block) {
+    problem = parseProblem(block[1]);
+    text = text.slice(0, block.index) + text.slice(block.index + block[0].length);
+  }
 
   let action = null;
   const m = text.match(ACTION_RE);
@@ -34,7 +42,93 @@ export function parseInterviewerReply(raw, interviewerName) {
   text = text.replace(/\*\*(.+?)\*\*/g, '$1');
   text = text.replace(/\n{3,}/g, '\n\n').trim();
 
-  return { text, action };
+  return { text, action, problem };
+}
+
+const SECTION_RE = /^(title|difficulty|schema|description|example\s*\d+|constraints|follow[\s-]?up)\s*:\s*(.*)$/i;
+const EXAMPLE_KEY_RE = /^(input|output|explanation)\s*:\s*(.*)$/i;
+
+/**
+ * Parses a LeetCode-style <problem> block into
+ * { title, difficulty, schema, description, examples: [{ input, output, explanation }], constraints: [], followUp, raw }.
+ * Returns null if it has no usable description.
+ */
+export function parseProblem(body) {
+  const lines = String(body)
+    .replace(/^\s*```[a-z]*\s*$/gim, '')
+    .split(/\r?\n/)
+    // Models sometimes bold or heading-mark the labels.
+    .map((l) => l.replace(/^\s*#{1,6}\s*/, '').replace(/^\s*\*\*([^*]+?):?\*\*:?/, '$1:').replace(/\s+$/, ''));
+
+  const p = { title: '', difficulty: '', schema: '', description: '', examples: [], constraints: [], followUp: '' };
+  let section = null;
+  let example = null;
+  let exampleKey = null;
+  const add = (prev, line) => (prev ? `${prev}\n${line}` : line);
+
+  for (const line of lines) {
+    const s = line.trim().match(SECTION_RE);
+    if (s) {
+      const name = s[1].toLowerCase();
+      section = name.startsWith('example') ? 'example' : name.startsWith('follow') ? 'followUp' : name;
+      exampleKey = null;
+      if (section === 'example') {
+        example = { input: '', output: '', explanation: '' };
+        p.examples.push(example);
+      } else if (section === 'constraints') {
+        if (s[2].trim()) p.constraints.push(s[2].trim());
+      } else if (s[2].trim()) {
+        p[section] = s[2].trim();
+      }
+      continue;
+    }
+    if (!section) continue;
+
+    if (section === 'example') {
+      const k = line.trim().match(EXAMPLE_KEY_RE);
+      if (k) {
+        exampleKey = k[1].toLowerCase();
+        example[exampleKey] = k[2].trim();
+      } else if (exampleKey && (line.trim() || exampleKey !== 'explanation')) {
+        example[exampleKey] = add(example[exampleKey], line);
+      }
+    } else if (section === 'constraints') {
+      const item = line.trim().replace(/^[-*•]\s*/, '');
+      if (item) p.constraints.push(item);
+    } else if (section === 'title' || section === 'difficulty') {
+      if (line.trim() && !p[section]) p[section] = line.trim();
+    } else {
+      p[section] = add(p[section], line);
+    }
+  }
+
+  for (const key of ['schema', 'description', 'followUp']) p[key] = p[key].replace(/^\n+|\n+$/g, '');
+  for (const ex of p.examples) for (const key of Object.keys(ex)) ex[key] = ex[key].replace(/^\n+|\n+$/g, '');
+  p.examples = p.examples.filter((ex) => ex.input || ex.output);
+  const diff = p.difficulty.match(/easy|medium|hard/i)?.[0];
+  p.difficulty = diff ? diff[0].toUpperCase() + diff.slice(1).toLowerCase() : '';
+
+  if (!p.description) return null;
+  p.raw = problemToText(p);
+  return p;
+}
+
+/** Plain-text version for the model's history, the evaluator, and retries. */
+function problemToText(p) {
+  const parts = [`Title: ${p.title || 'Problem'}`];
+  if (p.difficulty) parts.push(`Difficulty: ${p.difficulty}`);
+  if (p.schema) parts.push(`Schema:\n${p.schema}`);
+  parts.push(`Description:\n${p.description}`);
+  p.examples.forEach((ex, i) => {
+    const lines = [`Example ${i + 1}:`];
+    for (const [label, v] of [['Input', ex.input], ['Output', ex.output], ['Explanation', ex.explanation]]) {
+      if (v) lines.push(v.includes('\n') ? `${label}:\n${v}` : `${label}: ${v}`);
+    }
+    parts.push(lines.join('\n'));
+  });
+  if (p.constraints.length) parts.push(`Constraints:\n${p.constraints.map((c) => `- ${c}`).join('\n')}`);
+  if (p.followUp) parts.push(`Follow-up: ${p.followUp}`);
+  return `<problem>\n${parts.join('\n')}\n</problem>`;
 }
 
 function normalizeAction(a) {

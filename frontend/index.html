@@ -111,7 +111,10 @@
             <label class="check">
               <input type="checkbox" name="delivery" checked /> Delivery feedback: your camera and microphone measure smiles, head nods, pace, pauses, and pitch
             </label>
-            <p class="muted small">Delivery is measured on this device. Video and audio are never recorded or uploaded; only the measurements go to Gemma with your transcript. Wear headphones so Jordan's voice stays out of your microphone.</p>
+            <p class="muted small">Delivery is measured on this device and video is never recorded or uploaded. To count filler words like "um" accurately, the audio of each spoken answer is sent to <span id="transcriber">Google Gemini</span> for a word-for-word transcript; this app does not store it. Everything else stays on your device, and only the measurements go to Gemma with your transcript. Wear headphones so Jordan's voice stays out of your microphone.</p>
+            <label class="check">
+              <input type="checkbox" name="autoHints" checked /> Jordan offers a hint when you seem stuck on a technical question <em class="muted">(3 hints per day, shared across interviews)</em>
+            </label>
           </fieldset>
 
           <button class="btn primary" type="submit">Start interview</button>
@@ -170,7 +173,7 @@
         </div>
         <label class="field">
           <span id="answer-label">Your answer</span>
-          <textarea id="answer" rows="4" placeholder="Type your answer… (Ctrl+Enter to send)"></textarea>
+          <textarea id="answer" rows="4" placeholder="Speak your answer, or type it… (Ctrl+Enter to send)"></textarea>
         </label>
         <div class="composer-actions">
           <button id="mic-btn" class="btn" type="button" hidden aria-pressed="false">Speak</button>
