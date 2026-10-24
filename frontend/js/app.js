@@ -261,6 +261,7 @@ async function handOff(text) {
   if (session.done) {
     finishMedia();
     setVoiceStatus('Interview complete.');
+    scheduleReport(); // open the feedback report once the goodbye has been read
     return;
   }
   openFloor();
@@ -612,7 +613,21 @@ els.code.addEventListener('keydown', (e) => {
 els.reportBtn.addEventListener('click', goToReport);
 els.rescoreBtn.addEventListener('click', loadReport);
 
+// When the interviewer closes the interview, open the report on its own after a
+// short pause so the goodbye can be read.
+const REPORT_DELAY_MS = 3000;
+let reportTimer = null;
+
+function scheduleReport() {
+  clearTimeout(reportTimer);
+  const forSession = session;
+  reportTimer = setTimeout(() => {
+    if (session === forSession && !els.screens.interview.hidden) goToReport();
+  }, REPORT_DELAY_MS);
+}
+
 function goToReport() {
+  clearTimeout(reportTimer);
   stopTimer();
   finishMedia();
   lastSessionDelivery = session?.setup.delivery ? tracker.sessionSummary() : null;
