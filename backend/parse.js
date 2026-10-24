@@ -103,7 +103,8 @@ export function parseProblem(body) {
   }
 
   for (const key of ['schema', 'description', 'followUp']) p[key] = p[key].replace(/^\n+|\n+$/g, '');
-  for (const ex of p.examples) for (const key of Object.keys(ex)) ex[key] = ex[key].replace(/^\n+|\n+$/g, '');
+  // Examples render as plain monospace, so drop any `code` backticks the model added.
+  for (const ex of p.examples) for (const key of Object.keys(ex)) ex[key] = ex[key].replace(/`/g, '').replace(/^\n+|\n+$/g, '');
   p.examples = p.examples.filter((ex) => ex.input || ex.output);
   const diff = p.difficulty.match(/easy|medium|hard/i)?.[0];
   p.difficulty = diff ? diff[0].toUpperCase() + diff.slice(1).toLowerCase() : '';
