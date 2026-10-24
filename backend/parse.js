@@ -177,11 +177,11 @@ function score(v) {
 }
 
 function str(v) {
-  return typeof v === 'string' && v.trim() ? v.trim() : null;
+  return typeof v === 'string' && v.trim() && !/^(null|n\/a|none)\.?$/i.test(v.trim()) ? v.trim() : null;
 }
 
 /** Coerces the model's evaluation into a fixed shape; missing values become null ("unable to score"). */
-export function normalizeEvaluation(raw, records, hasDelivery = false) {
+export function normalizeEvaluation(raw, records) {
   const list = Array.isArray(raw?.questions) ? raw.questions : [];
   const byId = new Map(list.filter((q) => q && q.id != null).map((q) => [String(q.id).trim().toLowerCase(), q]));
 
@@ -197,7 +197,7 @@ export function normalizeEvaluation(raw, records, hasDelivery = false) {
       improve: str(q.improve),
       strongerAnswer: r.round === 'behavioral' ? str(q.strongerAnswer) : null,
       modelApproach: r.round === 'technical' ? str(q.modelApproach) : null,
-      deliveryNote: str(q.deliveryNote),
+      delivery: r.delivery ? str(q.delivery) : null,
     };
   });
 
@@ -212,22 +212,16 @@ export function normalizeEvaluation(raw, records, hasDelivery = false) {
     .filter(Boolean)
     .slice(0, 3);
 
-  const d = raw?.delivery ?? {};
-  const delivery = hasDelivery
-    ? {
-      score: score(d.score),
-      summary: str(d.summary),
-      face: str(d.face),
-      voice: str(d.voice),
-      tips: (Array.isArray(d.tips) ? d.tips : []).map((x) => str(x)).filter(Boolean).slice(0, 3),
-    }
-    : null;
+  const deliveryTips = (Array.isArray(raw?.delivery?.tips) ? raw.delivery.tips : [])
+    .map((x) => (typeof x === 'string' ? str(x) : str(x?.tip ?? x?.text)))
+    .filter(Boolean)
+    .slice(0, 3);
 
   return {
     overall: { score: score(raw?.overall?.score), summary: str(raw?.overall?.summary) },
     rounds,
     questions,
     topPractice,
-    delivery,
+    delivery: { summary: str(raw?.delivery?.summary), tips: deliveryTips },
   };
 }

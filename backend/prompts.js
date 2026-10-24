@@ -1,6 +1,7 @@
 // Prompt builders. The frontend state machine sends a structured description of
 // the current turn; these functions turn it into the interviewer's system
 // instruction for that turn.
+import { describeDelivery } from '../frontend/js/delivery-metrics.js';
 
 export const INTERVIEWER_NAME = 'Jordan';
 
@@ -269,38 +270,47 @@ function formatDuration(seconds) {
   return m ? `${m}m ${s}s` : `${s}s`;
 }
 
-/** One-line, human-readable version of the browser's delivery measurements. */
-function formatDelivery(d) {
-  if (!d) return '';
-  const parts = [];
-  const f = d.face;
-  if (f) {
-    parts.push(`face in frame ${f.presentPct}%`, `eye contact ${f.eyeContactPct}%`, `smiling ${f.smilePct}%`, `tense expression ${f.tensePct}%`, `${f.blinksPerMin} blinks/min`, `head movement ${f.headMovementDeg} deg`);
-  }
-  const v = d.voice;
-  if (v) {
-    parts.push(`${v.wpm} words/min over ${v.words} words`, `${v.fillerCount} filler words (${v.fillersPerMin}/min${v.topFillers?.length ? `: ${v.topFillers.map((x) => `"${x.word}" x${x.count}`).join(', ')}` : ''})`, `${v.longPauses} long pauses (longest ${v.longestPauseSec}s)`);
-    if (v.volumeDb != null) parts.push(`average level ${v.volumeDb} dBFS`);
-    if (v.pitchVariation != null) parts.push(`pitch variation ${v.pitchVariation} semitones`);
-    if (v.clarityPct != null) parts.push(`transcription confidence ${v.clarityPct}%`);
-  }
-  const flags = d.flags?.length ? ` Flagged: ${d.flags.map((x) => x.message).join(' ')}` : '';
-  return `${parts.join('; ')}.${flags}`;
+const DELIVERY_GUIDE = `Delivery measurements: some answers include nonverbal measurements taken on the candidate's device from their webcam and microphone (in the style of the MACH interview-coaching system). They are approximate. Use them to coach how the candidate came across, together with what they said:
+- Pace: about 120-160 words per minute is easy to follow in an interview; much faster sounds rushed, much slower can sound unsure.
+- Pauses: brief pauses help, but pauses filling more than about 30% of speaking time, or several pauses over 2 seconds, break the flow. Up to a few seconds of silence before the first word is normal thinking time.
+- Pitch variation (semitones, standard deviation): below about 2 tends to sound flat or monotone; about 3 or more sounds expressive.
+- Articulation rate is the speed while actually talking (pauses excluded); above about 190 words per minute sounds rushed even if the overall pace looks normal.
+- Rising endings: when pitch rises at the end of many statements (roughly a third or more of phrases), assertions can sound like questions (uptalk). Trailing off: when volume fades at the end of many phrases, key words get lost.
+- Think-aloud (coding questions): interviewers want to hear the reasoning. Silent stretches of 15 s or more are worth flagging; silence while typing code means they stopped narrating, silence without typing suggests they were stuck without saying so. Recommend narrating intent before and while coding.
+- Filler words above about 3% of words are noticeable.
+- Smiles (especially when greeting, at the start of an answer, and when describing good outcomes) and occasional nods come across as friendly and engaged. Frequent looking away can read as distracted.
+- Hedging (from the transcript, not measured): phrases like "I just", "I guess", "sort of", "kind of", "I think maybe", or "I might be wrong" undersell the candidate's own work; quote one if it is a pattern.
+Rules: never infer emotions, confidence, honesty, or personality from these numbers, and never comment on appearance. Cite the specific measurement you are reacting to. Where it fits, connect it to the content (for example, rushing through the Result part). If a measurement is missing, do not guess it.`;
+
+function deliveryBlock(d) {
+  const lines = describeDelivery(d);
+  return lines.length ? `Delivery measurements: ${lines.join('; ')}.` : 'Delivery measurements: none (typed answer, or camera and microphone were off).';
 }
 
 export function buildEvaluationPrompt(setup, records, delivery = null) {
   const rounds = [...new Set(records.map((r) => r.round))];
+  const hasDelivery = records.some((r) => describeDelivery(r.delivery).length);
   const blocks = records.map((r) => {
     const transcript = r.turns
       .map((t) => `${t.speaker === 'interviewer' ? 'Interviewer' : 'Candidate'}: ${t.text}`)
       .join('\n\n');
     const code = r.code ? `\nFinal code in editor:\n${r.code}\n` : '';
-    const measured = r.delivery ? `Delivery measured on this question: ${formatDelivery(r.delivery)}\n` : '';
     return `=== Question ${r.id} (${r.round}, ${r.type}; focus: ${r.topic}) ===
 Hints used: ${r.hintsUsed} | Time spent: ${formatDuration(r.seconds)}
-${measured}${transcript}
+${hasDelivery ? `${deliveryBlock(r.delivery)}\n` : ''}${transcript}
 ${code}`;
   });
+  const deliveryField = hasDelivery
+    ? `,
+      "delivery": "1-2 sentences of coaching on how they delivered this answer, citing the measurements; null if this answer has no measurements"`
+    : '';
+  const listening = delivery?.listeningNods != null && delivery?.listeningSeconds >= 10
+    ? `\nWhile listening to the interviewer (${delivery.listeningSeconds} s with the face visible), the candidate made ${delivery.listeningNods} head nod(s) and ${delivery.listeningShakes ?? 0} head shake(s).`
+    : '';
+  const overallLines = describeDelivery(delivery?.overall);
+  const sessionDelivery = hasDelivery
+    ? `\n\nWhole-interview delivery measurements: ${overallLines.join('; ') || 'none'}.${listening}`
+    : '';
 
   const exampleQuestions = [];
   if (rounds.includes('behavioral')) {
@@ -309,7 +319,7 @@ ${code}`;
       "scores": { "star": 1-5, "specificity": 1-5, "relevance": 1-5, "clarity": 1-5 },
       "wentWell": "1-2 sentences",
       "improve": "1-2 sentences, concrete",
-      "strongerAnswer": "A stronger STAR version of the candidate's answer, written in first person in 4-6 sentences, reusing their real details. Use [brackets] for specifics they would need to fill in."
+      "strongerAnswer": "A stronger STAR version of the candidate's answer, written in first person in 4-6 sentences, reusing their real details. Use [brackets] for specifics they would need to fill in."${deliveryField}
     }`);
   }
   if (rounds.includes('technical')) {
@@ -318,35 +328,15 @@ ${code}`;
       "scores": { "correctness": 1-5, "approach": 1-5, "communication": 1-5, "efficiency": 1-5 },
       "wentWell": "1-2 sentences",
       "improve": "1-2 sentences, concrete",
-      "modelApproach": "How a strong candidate would answer: the key idea, steps, and complexity or tradeoffs, in 3-6 sentences. Plain text; short code is allowed if essential."
+      "modelApproach": "How a strong candidate would answer: the key idea, steps, and complexity or tradeoffs, in 3-6 sentences. Plain text; short code is allowed if essential."${deliveryField}
     }`);
   }
 
-  const deliveryNote = delivery
-    ? `,
-      "deliveryNote": "Optional: one sentence on delivery for this question if its measurements stand out; otherwise null"`
-    : '';
-  if (delivery) {
-    for (let i = 0; i < exampleQuestions.length; i++) exampleQuestions[i] = exampleQuestions[i].replace(/\n    }$/, `${deliveryNote}\n    }`);
-  }
-  const deliverySchema = delivery
-    ? `,
-  "delivery": {
-    "score": 1-5,
-    "summary": "2-3 sentences on overall presence and delivery",
-    "face": ${delivery.face ? '"1-2 sentences on facial expression, eye contact, and composure"' : 'null'},
-    "voice": ${delivery.voice ? '"1-2 sentences on pace, filler words, pauses, volume, vocal variety, and articulation"' : 'null'},
-    "tips": ["two or three", "concrete delivery tips"]
-  }`
-    : '';
-  const deliverySection = delivery
-    ? `
-Delivery (facial expression and voice): these were measured automatically in the browser during the candidate's answers. Facial metrics come from webcam face tracking; voice metrics come from the microphone and speech transcription. They are heuristics, so describe them as observations ("you looked away from the camera often") rather than certainties, and weigh the flagged items most. Typical ranges: eye contact 60%+, 110-170 words/min, under 4 filler words/min, pitch variation 2+ semitones, transcription confidence 75%+. ${delivery.voice?.fillerSource === 'verbatim' ? 'Filler words were counted from a verbatim transcript of the audio, so those counts are reliable.' : 'Some filler counts come from browser dictation, which often drops "um" and "uh", so they may be low.'} Do not let delivery change the content scores above; score it separately in "delivery".
-Whole interview: ${formatDelivery(delivery)}
-`
-    : '';
-
   const roundsSchema = rounds.map((r) => `    "${r}": { "score": 1-5, "summary": "1-2 sentences" }`).join(',\n');
+  const deliverySchema = hasDelivery
+    ? `,
+  "delivery": { "summary": "2-3 sentences on the candidate's overall delivery across the interview, citing measurements", "tips": ["two or three", "specific delivery practice items"] }`
+    : '';
 
   return `Evaluate this mock interview.
 
@@ -354,7 +344,7 @@ Candidate target: ${setup.level}-level ${setup.role}${setup.companyType ? ` at a
 
 Behavioral criteria: star (Situation, Task, Action, Result structure), specificity (concrete details, numbers, their own role), relevance (answers the question asked), clarity (concise, easy to follow).
 Technical criteria: correctness, approach (problem-solving process and tradeoffs), communication (explaining their thinking), efficiency (time/space complexity or practical efficiency; for non-coding questions, how efficiently and pragmatically they reached a solution).
-
+${hasDelivery ? `\n${DELIVERY_GUIDE}\nDelivery is coached in the "delivery" fields only; do not change the content scores because of it.\n` : ''}
 Return exactly one JSON object with this shape:
 {
   "overall": { "score": 1-5, "summary": "2-3 sentences" },
@@ -368,10 +358,10 @@ ${exampleQuestions.join(',\n')}
 }
 
 Include one entry in "questions" for each question id below (${records.map((r) => r.id).join(', ')}), using the behavioral or technical shape that matches its round.
-${deliverySection}
+
 Transcript:
 
-${blocks.join('\n')}`;
+${blocks.join('\n')}${sessionDelivery}`;
 }
 
 export const JSON_RETRY_MESSAGE =

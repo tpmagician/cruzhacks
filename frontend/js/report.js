@@ -1,6 +1,5 @@
 // Renders the feedback report. Any missing score shows as "unable to score".
-
-import { LIMITS } from './delivery.js';
+import { combineDeliveries, deliveryChips, SMILE_THRESHOLD } from './delivery-metrics.js';
 
 const CRITERIA_LABELS = {
   star: 'STAR structure',
@@ -74,102 +73,6 @@ function spoken(text) {
 
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Delivery (facial expression and voice)
-
-const TILES = {
-  face: [
-    ['eyeContactPct', 'Eye contact', '%'],
-    ['smilePct', 'Smiling', '%'],
-    ['tensePct', 'Tense expression', '%'],
-    ['blinksPerMin', 'Blink rate', '/min'],
-    ['headMovementDeg', 'Head movement', '°'],
-    ['presentPct', 'In frame', '%'],
-  ],
-  voice: [
-    ['wpm', 'Pace', ' wpm'],
-    ['fillersPerMin', 'Filler words', '/min'],
-    ['longPausesPerMin', 'Long pauses', '/min'],
-    ['pitchVariation', 'Vocal variety', ' st'],
-    ['clarityPct', 'Clarity', '%'],
-    ['volumeDb', 'Volume', ' dB'],
-  ],
-};
-
-function target(lim) {
-  if (lim.min != null && lim.max != null) return `target ${lim.min}–${lim.max}`;
-  return lim.min != null ? `target ≥ ${lim.min}` : `target ≤ ${lim.max}`;
-}
-
-function tileHtml(data, [key, label, unit]) {
-  const v = data[key];
-  if (v == null) return '';
-  const lim = LIMITS[key];
-  const off = (lim.min != null && v < lim.min) || (lim.max != null && v > lim.max);
-  let extra = '';
-  if (key === 'fillersPerMin') {
-    const source = { verbatim: 'Counted from a verbatim transcript', mixed: 'Partly from browser dictation (may undercount)', browser: 'From browser dictation (may undercount)' }[data.fillerSource];
-    if (data.topFillers?.length) extra += `<div class="tile-note">${data.topFillers.map((f) => `“${escapeHtml(f.word)}” ×${f.count}`).join(', ')}</div>`;
-    if (source) extra += `<div class="tile-note">${source}</div>`;
-  }
-  return `
-    <div class="tile ${off ? 'tile-watch' : 'tile-ok'}">
-      <div class="tile-label">${label}</div>
-      <div class="tile-value">${v}<small>${unit}</small></div>
-      <div class="tile-note tile-status">${off ? 'Work on this' : 'Good'} · ${target(lim)}</div>
-      ${extra}
-    </div>`;
-}
-
-function deliverySection(measured, fb) {
-  if (!measured) {
-    return `
-      <section class="card">
-        <h2>Delivery: expression and voice</h2>
-        <p class="muted">No delivery data was captured. Keep your camera on and speak your answers (rather than typing) to get feedback on facial expression and voice.</p>
-      </section>`;
-  }
-  const group = (area, title, comment) => {
-    const data = measured[area];
-    if (!data) {
-      const how = area === 'face' ? 'Turn your camera on' : 'Speak your answers with the mic on';
-      return `<h3>${title}</h3><p class="muted small">Not measured. ${how} to get this feedback.</p>`;
-    }
-    return `
-      <h3>${title}</h3>
-      ${comment ? `<p>${escapeHtml(comment)}</p>` : ''}
-      <div class="tiles">${TILES[area].map((t) => tileHtml(data, t)).join('')}</div>`;
-  };
-  const tips = fb?.tips?.length ? `<h4>Delivery tips</h4><ul>${fb.tips.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>` : '';
-  return `
-    <section class="card delivery">
-      <div class="delivery-head">
-        <h2>Delivery: expression and voice</h2>
-        ${fb ? scoreBadge(fb.score) : ''}
-      </div>
-      ${fb?.summary ? `<p>${escapeHtml(fb.summary)}</p>` : ''}
-      ${group('face', 'Facial expression', fb?.face)}
-      ${group('voice', 'Voice and articulation', fb?.voice)}
-      ${tips}
-      <p class="muted small">Measured in your browser from webcam face tracking and the microphone; only these numbers are sent for scoring. They are estimates, so treat them as pointers rather than verdicts.</p>
-    </section>`;
-}
-
-function questionDeliveryHtml(d, note) {
-  if (!d && !note) return '';
-  const chips = [];
-  if (d?.face) chips.push(`Eye contact ${d.face.eyeContactPct}%`, `Smiling ${d.face.smilePct}%`);
-  if (d?.voice) chips.push(`${d.voice.wpm} wpm`, `${d.voice.fillerCount} filler word${d.voice.fillerCount === 1 ? '' : 's'}`, `${d.voice.longPauses} long pause${d.voice.longPauses === 1 ? '' : 's'}`);
-  const flagged = d?.flags?.length ? `<ul class="flags">${d.flags.map((f) => `<li>${escapeHtml(f.message)}</li>`).join('')}</ul>` : '';
-  return `
-    <h4>Delivery</h4>
-    ${chips.length ? `<div class="chips">${chips.map((c) => `<span class="chip">${c}</span>`).join('')}</div>` : ''}
-    ${note ? `<p>${escapeHtml(note)}</p>` : ''}
-    ${flagged}`;
-}
-
-// ---------------------------------------------------------------------------
-
 function scoreBadge(v) {
   return v == null
     ? '<span class="score score-none">unable to score</span>'
@@ -196,7 +99,92 @@ function transcriptHtml(rec) {
     .join('');
 }
 
-function questionHtml(rec, q, measured) {
+function chipsHtml(chips) {
+  return chips.length
+    ? `<ul class="chips">${chips.map((c) => `<li><span>${escapeHtml(c.label)}</span><strong>${escapeHtml(c.value)}</strong></li>`).join('')}</ul>`
+    : '';
+}
+
+function questionDeliveryHtml(rec, q) {
+  const d = combineDeliveries(rec.deliveries);
+  const chips = deliveryChips(d);
+  if (!chips.length) return '';
+  return `
+      <div class="delivery-block">
+        <h4>Delivery</h4>
+        ${chipsHtml(chips)}
+        ${q?.delivery ? `<p>${escapeHtml(q.delivery)}</p>` : ''}
+      </div>`;
+}
+
+/** Smile intensity per second with markers where each question's answer began (MACH's summary view). */
+function smileTimeline(s) {
+  const pts = s?.timeline ?? [];
+  if (pts.length < 3) return '';
+  const W = 600;
+  const H = 130;
+  const left = 30;
+  const right = 10;
+  const top = 18;
+  const bottom = 20;
+  const dur = Math.max(s.duration ?? 0, pts.at(-1).t + 1, 1);
+  const x = (t) => left + (t / dur) * (W - left - right);
+  const y = (v) => H - bottom - (v / 100) * (H - top - bottom);
+  const runs = [];
+  for (const p of pts) {
+    const run = runs.at(-1);
+    if (run && p.t - run.at(-1).t <= 2) run.push(p);
+    else runs.push([p]);
+  }
+  const lines = runs
+    .map((run) => (run.length === 1
+      ? `<circle class="tl-dot" cx="${x(run[0].t).toFixed(1)}" cy="${y(run[0].smile).toFixed(1)}" r="1.8" />`
+      : `<polyline class="tl-line" points="${run.map((p) => `${x(p.t).toFixed(1)},${y(p.smile).toFixed(1)}`).join(' ')}" />`))
+    .join('');
+  const marks = (s.marks ?? [])
+    .map((m) => `<line class="tl-mark" x1="${x(m.t).toFixed(1)}" x2="${x(m.t).toFixed(1)}" y1="${top - 4}" y2="${H - bottom}" /><text class="tl-label" x="${(x(m.t) + 3).toFixed(1)}" y="${top - 6}">${escapeHtml(m.key.toUpperCase())}</text>`)
+    .join('');
+  const step = Math.max(1, Math.ceil(dur / 60 / 10));
+  let ticks = '';
+  for (let m = 0; m * 60 <= dur; m += step) {
+    ticks += `<text class="tl-axis" x="${x(m * 60).toFixed(1)}" y="${H - 4}" text-anchor="middle">${m}m</text>`;
+  }
+  return `
+    <figure class="timeline">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Smile intensity from 0 to 100 across the interview">
+        <line class="tl-grid" x1="${left}" x2="${W - right}" y1="${y(0)}" y2="${y(0)}" />
+        <line class="tl-grid" x1="${left}" x2="${W - right}" y1="${y(100)}" y2="${y(100)}" />
+        <line class="tl-threshold" x1="${left}" x2="${W - right}" y1="${y(SMILE_THRESHOLD)}" y2="${y(SMILE_THRESHOLD)}" />
+        <text class="tl-axis" x="${left - 4}" y="${y(100) + 4}" text-anchor="end">100</text>
+        <text class="tl-axis" x="${left - 4}" y="${y(0) + 4}" text-anchor="end">0</text>
+        ${marks}${lines}${ticks}
+      </svg>
+      <figcaption class="muted small">Smile intensity (0–100) across the whole interview, including while Jordan spoke. The dashed line is where it counts as smiling; labels mark when you began each answer.</figcaption>
+    </figure>`;
+}
+
+function deliverySectionHtml(records, report, sessionDelivery) {
+  const overall = combineDeliveries(records.flatMap((r) => r.deliveries ?? []));
+  const chips = deliveryChips(overall);
+  if (sessionDelivery?.listeningNods != null && sessionDelivery.listeningSeconds >= 10) {
+    chips.push({ label: 'Nods while listening', value: String(sessionDelivery.listeningNods) });
+  }
+  const timeline = smileTimeline(sessionDelivery);
+  if (!chips.length && !timeline) return '';
+  const summary = report?.delivery?.summary;
+  const tips = report?.delivery?.tips ?? [];
+  return `
+    <section class="card delivery">
+      <h2>Delivery</h2>
+      <p class="muted small">Measured on your device from your camera and microphone, following the MACH interview-coaching method (Hoque et al., 2013). These are approximate signals, not a score.</p>
+      ${chipsHtml(chips)}
+      ${timeline}
+      ${summary ? `<p>${escapeHtml(summary)}</p>` : ''}
+      ${tips.length ? `<h4>Delivery practice</h4><ol>${tips.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ol>` : ''}
+    </section>`;
+}
+
+function questionHtml(rec, q) {
   const scores = Object.entries(q?.scores ?? {})
     .map(([k, v]) => `<li><span>${CRITERIA_LABELS[k] ?? k}</span>${scoreBadge(v)}</li>`)
     .join('');
@@ -227,8 +215,8 @@ function questionHtml(rec, q, measured) {
         <div><h4>What went well</h4><p>${text(q?.wentWell)}</p></div>
         <div><h4>What to improve</h4><p>${text(q?.improve)}</p></div>
       </div>
+      ${questionDeliveryHtml(rec, q)}
       ${better}
-      ${questionDeliveryHtml(measured, q?.deliveryNote)}
     </article>`;
 }
 
@@ -236,9 +224,9 @@ function questionHtml(rec, q, measured) {
  * @param {HTMLElement} el
  * @param {import('./interview.js').InterviewSession} session
  * @param {{ok: boolean, report?: object, message?: string}} result
- * @param {{ overall: object|null, byRecord: Record<string, object|null> }} [measured]  delivery measurements
+ * @param {object|null} sessionDelivery DeliveryTracker.sessionSummary()
  */
-export function renderReport(el, session, result, measured = { overall: null, byRecord: {} }) {
+export function renderReport(el, session, result, sessionDelivery = null) {
   const records = session.answeredRecords();
   const report = result.ok ? result.report : null;
 
@@ -273,8 +261,8 @@ export function renderReport(el, session, result, measured = { overall: null, by
       <h2>Top 3 things to practice</h2>
       ${practice}
     </section>
-    ${deliverySection(measured.overall, report?.delivery)}
+    ${deliverySectionHtml(records, report, sessionDelivery)}
     <h2>Question by question</h2>
-    ${records.map((rec) => questionHtml(rec, report?.questions?.find((q) => q.id === rec.id), measured.byRecord?.[rec.id])).join('')}
+    ${records.map((rec) => questionHtml(rec, report?.questions?.find((q) => q.id === rec.id))).join('')}
   `;
 }

@@ -14,6 +14,37 @@
   </header>
 
   <main>
+    <nav class="mode-switch" aria-label="Practice mode">
+      <button id="mode-interview" class="btn" type="button" aria-pressed="true">Interview practice</button>
+      <button id="mode-presentation" class="btn" type="button" aria-pressed="false">Presentation practice</button>
+    </nav>
+    <section id="screen-presentation" class="screen" hidden aria-labelledby="presentation-heading">
+      <div class="report-head">
+        <div>
+          <h1 id="presentation-heading">Presentation practice</h1>
+          <p class="muted">Rehearse out loud and review your head direction, side-to-side movement, and gestures.</p>
+        </div>
+        <span id="presentation-timer" class="timer" aria-label="Active practice time">0:00</span>
+      </div>
+      <div class="card">
+        <p>Place your camera at eye level on a stable surface. Step back until your head, shoulders, and hands fit in view. Face forward in a comfortable position for a 3-second calibration.</p>
+        <p class="muted small">Video is processed on this device. We do not record or upload video or audio. No API key is needed.</p>
+        <div class="camera-preview">
+          <video id="presentation-video" autoplay playsinline muted aria-label="Mirrored camera preview"></video>
+          <span id="camera-placeholder">Your camera preview will appear here</span>
+        </div>
+        <p id="presentation-status" role="status" aria-live="polite">Enable your camera to get started.</p>
+        <p id="presentation-coverage" class="muted small"></p>
+        <div id="presentation-error" class="notice error" role="alert" hidden></div>
+        <div class="bar-actions">
+          <button id="presentation-camera" class="btn primary" type="button">Enable camera</button>
+          <button id="presentation-start" class="btn primary" type="button" disabled>Calibrate &amp; start</button>
+          <button id="presentation-pause" class="btn" type="button" disabled>Pause</button>
+          <button id="presentation-stop" class="btn" type="button" disabled>Finish &amp; view report</button>
+        </div>
+      </div>
+      <div id="presentation-report" tabindex="-1" hidden></div>
+    </section>
     <!-- Setup -------------------------------------------------------------->
     <section id="screen-setup" class="screen">
       <div class="card setup-card">
@@ -71,9 +102,20 @@
             <input type="checkbox" name="timer" checked /> Show a per-question timer
           </label>
 
-          <label class="check">
-            <input type="checkbox" name="autoHints" checked /> Interviewer offers hints when you seem stuck on a technical question <em class="muted">(3 hints per day, shared across interviews)</em>
-          </label>
+          <fieldset class="field">
+            <legend>Coaching</legend>
+            <label class="check">
+              <input type="checkbox" name="voice" checked /> Talk out loud: Jordan reads each question aloud and your speech is typed into the answer box
+            </label>
+            <p id="voice-support" class="muted small"></p>
+            <label class="check">
+              <input type="checkbox" name="delivery" checked /> Delivery feedback: your camera and microphone measure smiles, head nods, pace, pauses, and pitch
+            </label>
+            <p class="muted small">Delivery is measured on this device and video is never recorded or uploaded. To count filler words like "um" accurately, the audio of each spoken answer is sent to <span id="transcriber">Google Gemini</span> for a word-for-word transcript; this app does not store it. Everything else stays on your device, and only the measurements go to Gemma with your transcript. Wear headphones so Jordan's voice stays out of your microphone.</p>
+            <label class="check">
+              <input type="checkbox" name="autoHints" checked /> Jordan offers a hint when you seem stuck on a technical question <em class="muted">(3 hints per day, shared across interviews)</em>
+            </label>
+          </fieldset>
 
           <button class="btn primary" type="submit">Start interview</button>
         </form>
@@ -94,6 +136,20 @@
         </div>
       </div>
 
+      <div id="coach-bar" class="coach-bar card" hidden>
+        <div id="selfview-wrap" class="selfview" hidden>
+          <video id="selfview" autoplay playsinline muted aria-label="Your camera preview, mirrored"></video>
+          <span id="face-dot" class="face-dot" title="Face tracking"></span>
+        </div>
+        <div class="coach-status">
+          <div id="voice-status" class="voice-status" role="status" aria-live="polite"></div>
+          <div id="voice-interim" class="muted small"></div>
+          <div id="mic-meter-wrap" class="meter" hidden title="Microphone level"><span id="mic-meter"></span></div>
+          <div id="delivery-notice" class="muted small"></div>
+        </div>
+        <button id="skip-voice" class="btn ghost small" type="button" hidden>Skip (Esc)</button>
+      </div>
+
       <div id="star-tip" class="card tip" hidden></div>
 
       <div id="transcript" class="transcript" aria-live="polite"></div>
@@ -109,18 +165,6 @@
       </div>
 
       <form id="composer" class="composer">
-        <div class="media">
-          <div class="cam">
-            <video id="cam-video" autoplay muted playsinline></video>
-            <div id="cam-off" class="cam-off muted small">Camera off</div>
-            <span id="rec-dot" class="rec-dot" hidden aria-hidden="true"></span>
-          </div>
-          <div class="media-controls">
-            <button id="mic-btn" class="btn primary" type="button" aria-pressed="false">Start speaking</button>
-            <button id="cam-btn" class="btn ghost small" type="button">Turn camera on</button>
-            <div id="mic-status" class="muted small" aria-live="polite"></div>
-          </div>
-        </div>
         <div id="code-area" class="code-area" hidden>
           <label class="field">
             <span id="code-label">Code editor</span>
@@ -132,6 +176,7 @@
           <textarea id="answer" rows="4" placeholder="Speak your answer, or type it… (Ctrl+Enter to send)"></textarea>
         </label>
         <div class="composer-actions">
+          <button id="mic-btn" class="btn" type="button" hidden aria-pressed="false">Speak</button>
           <button id="hint-btn" class="btn ghost" type="button" hidden>I'm stuck</button>
           <span id="hint-count" class="muted small"></span>
           <button id="send-btn" class="btn primary" type="submit">Send</button>

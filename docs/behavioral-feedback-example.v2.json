@@ -1,0 +1,463 @@
+{
+  "schemaVersion": 2,
+  "rubricVersion": "behavioral-v1.0-draft",
+  "status": "illustrative_design_fixture",
+  "provenance": {
+    "text": "Fictional excerpt-level answer, not a timed full recording.",
+    "audio": "Independent synthetic aggregate inputs; not extracted from the transcript excerpts.",
+    "visual": "Independent synthetic duration inputs; no recorded participant.",
+    "ratings": "Proposed example anchor choices, not human-validated reference labels."
+  },
+  "input": {
+    "questionId": "b1",
+    "templateId": "conflict-entry-v1",
+    "mode": "interview",
+    "level": "Entry",
+    "plannedDimensions": [
+      "relevance",
+      "ownership",
+      "judgment",
+      "collaboration",
+      "outcome",
+      "learning"
+    ],
+    "turns": [
+      {
+        "id": "t0",
+        "speaker": "interviewer",
+        "text": "Tell me about a specific disagreement during a project. Explain your role, how and why you responded, the outcome, and what you learned."
+      },
+      {
+        "id": "t1",
+        "speaker": "candidate",
+        "text": "During our hackathon, my teammate and I disagreed about an API response change. I compared the request and response payloads with my teammate instead of arguing about implementation preferences because the demo deadline was close. My teammate wanted to preserve the old format. We fixed the issue and the demo went well. I learned that communication is important."
+      },
+      {
+        "id": "t2",
+        "speaker": "interviewer",
+        "probeTargets": [
+          "personal_actions",
+          "other_perspective"
+        ],
+        "text": "What was your responsibility, and what concern was your teammate raising?"
+      },
+      {
+        "id": "t3",
+        "speaker": "candidate",
+        "text": "I owned the API adapter, and my teammate owned the client. Their concern was that my response format would break existing clients. I suggested comparing payloads instead of arguing about implementation preferences. We opened the old client together and inspected which fields it needed."
+      },
+      {
+        "id": "t4",
+        "speaker": "interviewer",
+        "probeTargets": [
+          "outcome_assessment",
+          "learning"
+        ],
+        "text": "What evidence showed what happened afterward, and what would you change next time?"
+      },
+      {
+        "id": "t5",
+        "speaker": "candidate",
+        "text": "The adapter passed the three existing client test cases. I did not compare an alternative approach, and I cannot separate our adapter change from the other fixes made before the demo. I would add a shared example payload before implementing the next API change."
+      }
+    ]
+  },
+  "report": {
+    "behavioral": {
+      "questionId": "b1",
+      "initial": {
+        "summary": {
+          "value": 2.8333333333333335,
+          "display": "2.8/5",
+          "scoredDimensions": 6,
+          "plannedDimensions": 6
+        },
+        "dimensions": {
+          "relevance": {
+            "status": "scored",
+            "score": 4,
+            "anchorId": "relevance.4",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "During our hackathon, my teammate and I disagreed about an API response change."
+              }
+            ],
+            "explanation": "Illustrative anchor selection for evidence in the initial answer; human calibration may revise this judgment.",
+            "nextStep": "Keep the relevant context brief in the next example."
+          },
+          "ownership": {
+            "status": "scored",
+            "score": 3,
+            "anchorId": "ownership.3",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "I compared the request and response payloads"
+              }
+            ],
+            "explanation": "Illustrative anchor selection for evidence in the initial answer; human calibration may revise this judgment.",
+            "nextStep": "Explain which decision you personally made within your responsibility."
+          },
+          "judgment": {
+            "status": "scored",
+            "score": 3,
+            "anchorId": "judgment.3",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "because the demo deadline was close."
+              }
+            ],
+            "explanation": "Illustrative anchor selection for evidence in the initial answer; human calibration may revise this judgment.",
+            "nextStep": "Explain an alternative you considered and why you chose the payload comparison."
+          },
+          "collaboration": {
+            "status": "scored",
+            "score": 3,
+            "anchorId": "collaboration.3",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "My teammate wanted to preserve the old format."
+              }
+            ],
+            "explanation": "Illustrative anchor selection for evidence in the initial answer; human calibration may revise this judgment.",
+            "nextStep": "Explain how you checked that you and your teammate agreed on the next action."
+          },
+          "outcome": {
+            "status": "scored",
+            "score": 2,
+            "anchorId": "outcome.2",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "We fixed the issue and the demo went well."
+              }
+            ],
+            "explanation": "Illustrative anchor selection for evidence in the initial answer; human calibration may revise this judgment.",
+            "nextStep": "Explain what the test cases checked and how the adapter change affected them."
+          },
+          "learning": {
+            "status": "scored",
+            "score": 2,
+            "anchorId": "learning.2",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "I learned that communication is important."
+              }
+            ],
+            "explanation": "Illustrative anchor selection for evidence in the initial answer; human calibration may revise this judgment.",
+            "nextStep": "Describe a later occasion when you used the shared example payload, if one exists."
+          }
+        },
+        "star": {
+          "situation": 2,
+          "task": 1,
+          "action": 2,
+          "result": 1,
+          "total": 6
+        }
+      },
+      "completed": {
+        "summary": {
+          "value": 3.5,
+          "display": "3.5/5",
+          "scoredDimensions": 6,
+          "plannedDimensions": 6
+        },
+        "dimensions": {
+          "relevance": {
+            "status": "scored",
+            "score": 4,
+            "anchorId": "relevance.4",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "During our hackathon, my teammate and I disagreed about an API response change."
+              }
+            ],
+            "explanation": "A specific disagreement and a clear sequence address the requested behavior.",
+            "nextStep": "Keep the relevant context brief in the next example."
+          },
+          "ownership": {
+            "status": "scored",
+            "score": 4,
+            "anchorId": "ownership.4",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t3",
+                "quote": "I owned the API adapter, and my teammate owned the client."
+              }
+            ],
+            "explanation": "Responsibilities and the payload-comparison action are clear; decision accountability could be developed further.",
+            "nextStep": "Explain which decision you personally made within your responsibility."
+          },
+          "judgment": {
+            "status": "scored",
+            "score": 3,
+            "anchorId": "judgment.3",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t1",
+                "quote": "because the demo deadline was close."
+              }
+            ],
+            "explanation": "The deadline explains the choice, but comparison with a meaningful alternative is not developed.",
+            "nextStep": "Explain an alternative you considered and why you chose the payload comparison."
+          },
+          "collaboration": {
+            "status": "scored",
+            "score": 4,
+            "anchorId": "collaboration.4",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t3",
+                "quote": "Their concern was that my response format would break existing clients."
+              }
+            ],
+            "explanation": "The teammate's compatibility concern and a joint inspection are explained.",
+            "nextStep": "Explain how you checked that you and your teammate agreed on the next action."
+          },
+          "outcome": {
+            "status": "scored",
+            "score": 3,
+            "anchorId": "outcome.3",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t5",
+                "quote": "The adapter passed the three existing client test cases."
+              }
+            ],
+            "explanation": "Existing client tests provide an observable result; the verification procedure and attribution remain limited.",
+            "nextStep": "Explain what the test cases checked and how the adapter change affected them."
+          },
+          "learning": {
+            "status": "scored",
+            "score": 3,
+            "anchorId": "learning.3",
+            "evidence": [
+              {
+                "kind": "quote",
+                "turnId": "t5",
+                "quote": "I would add a shared example payload before implementing the next API change."
+              }
+            ],
+            "explanation": "A concrete future change is identified, with no subsequent application yet described.",
+            "nextStep": "Describe a later occasion when you used the shared example payload, if one exists."
+          }
+        },
+        "star": {
+          "situation": 2,
+          "task": 2,
+          "action": 2,
+          "result": 2,
+          "total": 8
+        }
+      },
+      "episodeType": {
+        "value": "specific_episode",
+        "evidence": [
+          {
+            "turnId": "t1",
+            "quote": "During our hackathon, my teammate and I disagreed about an API response change."
+          }
+        ]
+      },
+      "afterFollowups": {
+        "summaryDifference": 0.6666666666666666,
+        "dimensionDifferences": {
+          "relevance": 0,
+          "ownership": 1,
+          "judgment": 0,
+          "collaboration": 1,
+          "outcome": 1,
+          "learning": 1
+        },
+        "interpretation": "Additional evidence elicited, not a penalty or causal assistance estimate."
+      },
+      "sessionSummary": {
+        "value": null,
+        "status": "more_examples_needed",
+        "fullyScoredQuestions": 1,
+        "minimumFullyScoredQuestions": 3
+      },
+      "feedback": {
+        "strength": "You described your teammate's compatibility concern and the payload comparison you performed together.",
+        "priority": "Explain an alternative you considered and why you chose the payload comparison.",
+        "exercise": "Retell the same experience, adding the alternative you considered. Then try a different conflict question.",
+        "source": {
+          "turnId": "t3",
+          "quote": "I suggested comparing payloads instead of arguing about implementation preferences."
+        }
+      }
+    },
+    "audioCalculationExample": {
+      "input": {
+        "spokenWords": 300,
+        "answerSeconds": 120,
+        "voicedSeconds": 96,
+        "fillerEvents": 6,
+        "internalGapDurationsSeconds": [
+          0.5,
+          0.75,
+          1,
+          1,
+          1.25,
+          1.5,
+          1.5,
+          2,
+          2.5,
+          3,
+          4,
+          5
+        ],
+        "validCaptureSeconds": 120,
+        "expectedCaptureSeconds": 120,
+        "wordAlignmentValid": true
+      },
+      "metrics": {
+        "speakingRate": {
+          "value": 150,
+          "unit": "words/minute",
+          "status": "observed",
+          "numerator": 300,
+          "denominator": 120,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "speechOnlyWordRate": {
+          "value": 187.5,
+          "unit": "words/minute",
+          "status": "observed",
+          "numerator": 300,
+          "denominator": 96,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "silentPauseFrequency": {
+          "value": 6,
+          "unit": "pauses/minute",
+          "status": "observed",
+          "numerator": 12,
+          "denominator": 120,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "medianPause": {
+          "value": 1.5,
+          "unit": "seconds",
+          "status": "observed",
+          "numerator": null,
+          "denominator": 12,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "p90Pause": {
+          "value": 4,
+          "unit": "seconds",
+          "status": "observed",
+          "numerator": null,
+          "denominator": 12,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "pauseFraction": {
+          "value": 0.2,
+          "unit": "fraction",
+          "status": "observed",
+          "numerator": 24,
+          "denominator": 120,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "fillerDensity": {
+          "value": 2,
+          "unit": "events/100 words",
+          "status": "observed",
+          "numerator": 6,
+          "denominator": 300,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "answerDuration": {
+          "value": 120,
+          "unit": "seconds",
+          "status": "observed",
+          "numerator": 120,
+          "denominator": null,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "captureCoverage": {
+          "value": 1,
+          "unit": "fraction",
+          "status": "observed",
+          "numerator": 120,
+          "denominator": 120,
+          "coverage": 1,
+          "algorithmVersion": "synthetic-calculation-v1"
+        }
+      },
+      "interpretation": "Raw observations without an ideal-range score."
+    },
+    "visualCalculationExample": {
+      "input": {
+        "expectedAnswerSeconds": 120,
+        "validHeadSeconds": 100,
+        "outsideRangeSeconds": 8,
+        "sustainedHeadEvents": [
+          {
+            "startSeconds": 55,
+            "endSeconds": 59
+          },
+          {
+            "startSeconds": 78,
+            "endSeconds": 80
+          }
+        ]
+      },
+      "metrics": {
+        "headOutsideFraction": {
+          "value": 0.08,
+          "unit": "fraction",
+          "status": "observed",
+          "numerator": 8,
+          "denominator": 100,
+          "coverage": 0.8333333333333334,
+          "algorithmVersion": "synthetic-calculation-v1"
+        },
+        "headCoverage": {
+          "value": 0.8333333333333334,
+          "unit": "fraction",
+          "status": "observed",
+          "numerator": 100,
+          "denominator": 120,
+          "coverage": 0.8333333333333334,
+          "algorithmVersion": "synthetic-calculation-v1"
+        }
+      },
+      "interpretation": "Head direction only; no eye contact, attention, confidence, or appearance score."
+    },
+    "audit": {
+      "questionBankVersion": "questions-v1-draft",
+      "probePolicyVersion": "neutral-probes-v1-draft",
+      "transcriptRevision": "fictional-r1",
+      "modelVersion": null,
+      "evaluationPromptVersion": "planned-v2",
+      "metricVersion": "synthetic-calculation-v1"
+    }
+  }
+}

@@ -1,196 +1,327 @@
-// Delivery analysis: facial expression from the webcam and voice from the mic.
-// Everything runs in the browser; only summary numbers leave the page (with the
-// evaluation request). Measurements are only taken during the candidate's turns.
-//
-// Face: MediaPipe Face Landmarker blendshapes + head pose, sampled ~5x a second.
-// Voice: Web Audio level and pitch every 100 ms, plus the dictated words
-// (pace, filler words) and the recognizer's confidence as a clarity proxy.
-// Each answer's audio is also sent for a verbatim transcript, because browser
-// dictation drops most "um"s and "uh"s; when it returns, its filler counts win.
-
+// Live delivery tracking during the interview (MACH-style): the webcam feeds a face
+// worker (smiles, nods, head direction) and the microphone feeds prosody analysis
+// (pauses, pitch, loudness). Everything runs on this device; only the derived
+// numbers are sent to the server with the transcript for feedback. The one
+// exception: a spoken answer's audio is sent for a verbatim transcript, because
+// browser dictation drops most "um"s and "uh"s; when it returns, its filler
+// counts replace the dictated ones. Nothing is stored.
 import { api } from './api.js';
+import {
+  summarizeAudio, summarizeFace, headBaseline, detectHeadGestures, countFillers, countWords, rmsDb, detectPitch,
+} from './delivery-metrics.js';
 
-const MEDIAPIPE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
-const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
-
-const FACE_MS = 200;
-const AUDIO_MS = 100;
-const LONG_PAUSE_MS = 2500;
-const MIN_FACE_FRAMES = 25; // ~5 s of face data before we report on it
-const MIN_WORDS = 15;
+const FACE_FPS = 15;
+const AUDIO_MS = 50;
+const PITCH_FLOOR_DB = -60;
 const PCM_RATE = 16000;
 const MAX_ANSWER_SEC = 300; // cap per-answer audio (~9.6 MB of WAV)
 const MIN_AUDIO_SEC = 2;
 
-// "like" only counts as a filler when it isn't doing grammatical work ("I'd like", "looks like").
-const FILLER_RE = /\b(um+|uh+m*|erm*|ah+|hmm+|you know|i mean|sort of|kind of|basically|literally|(?<!\b(?:would|i'd|we'd|you'd|they'd|i|we|you|they|look|looks|looked|feel|feels|felt|seem|seems|something|anything|things?|just)\s)like)\b/gi;
-
-// What counts as worth flagging. Shared with the report so tiles and feedback agree.
-export const LIMITS = {
-  presentPct: { min: 80, message: 'Often out of frame. Center yourself in the camera.' },
-  eyeContactPct: { min: 60, message: 'Looked away from the camera a lot. Look at the lens when you make key points.' },
-  smilePct: { min: 5, message: 'Rarely smiled, so your expression may read as flat or nervous.' },
-  tensePct: { max: 25, message: 'Brow furrowed or mouth tense much of the time.' },
-  blinksPerMin: { max: 35, message: 'High blink rate, which often reads as nerves.' },
-  headMovementDeg: { max: 9, message: 'Lots of head movement. Try to keep a steady, settled posture.' },
-  wpm: { min: 110, max: 170, message: { low: 'Spoke slowly.', high: 'Spoke fast. Slow down and let key points land.' } },
-  fillersPerMin: { max: 4, message: 'Frequent filler words. Swap them for a short silent pause.' },
-  longPausesPerMin: { max: 2, message: 'Frequent long pauses mid-answer.' },
-  volumeDb: { min: -42, message: 'Spoke quietly. Project a little more.' },
-  pitchVariation: { min: 2, message: 'Fairly monotone. Vary your pitch to sound more engaged.' },
-  clarityPct: { min: 75, message: 'The transcriber often struggled to understand you. Enunciate and finish your words.' },
+const CAMERA_ERRORS = {
+  NotAllowedError: 'Camera permission was denied, so smile and head-movement feedback is off.',
+  NotFoundError: 'No camera was found, so smile and head-movement feedback is off.',
+  NotReadableError: 'The camera is in use by another app, so smile and head-movement feedback is off.',
+};
+const MIC_ERRORS = {
+  NotAllowedError: 'Microphone permission was denied, so pace, pause, and pitch feedback is off.',
+  NotFoundError: 'No microphone was found, so pace, pause, and pitch feedback is off.',
+  NotReadableError: 'The microphone is in use by another app, so pace, pause, and pitch feedback is off.',
 };
 
-function emptyAcc() {
-  return {
-    frames: 0, faceFrames: 0, awayFrames: 0, smileFrames: 0, tenseFrames: 0, blinks: 0,
-    yawSum: 0, yawSq: 0, tiltSum: 0, tiltSq: 0,
-    speakingMs: 0, pauses: 0, longestPauseMs: 0,
-    voicedTicks: 0, dbSum: 0, f0Count: 0, stSum: 0, stSq: 0,
-    words: 0, confSum: 0, confCount: 0, fillers: {},
-    voiceSegs: 0, verbatimSegs: 0,
-  };
-}
-
-function mergeInto(a, b) {
-  for (const [k, v] of Object.entries(b)) {
-    if (k === 'fillers') for (const [w, n] of Object.entries(v)) a.fillers[w] = (a.fillers[w] ?? 0) + n;
-    else if (k === 'longestPauseMs') a[k] = Math.max(a[k], v);
-    else a[k] += v;
-  }
-}
-
-const pct = (n, d) => Math.round((100 * n) / d);
-const std = (sum, sq, n) => Math.sqrt(Math.max(0, sq / n - (sum / n) ** 2));
-const round1 = (x) => Math.round(x * 10) / 10;
-
-/** Turns raw counters into reportable numbers and flags. */
-export function summarize(acc) {
-  let face = null;
-  if (acc.faceFrames >= MIN_FACE_FRAMES) {
-    const minutes = (acc.faceFrames * FACE_MS) / 60000;
-    face = {
-      presentPct: pct(acc.faceFrames, acc.frames),
-      eyeContactPct: pct(acc.faceFrames - acc.awayFrames, acc.faceFrames),
-      smilePct: pct(acc.smileFrames, acc.faceFrames),
-      tensePct: pct(acc.tenseFrames, acc.faceFrames),
-      blinksPerMin: Math.round(acc.blinks / minutes),
-      headMovementDeg: round1(Math.hypot(std(acc.yawSum, acc.yawSq, acc.faceFrames), std(acc.tiltSum, acc.tiltSq, acc.faceFrames))),
-    };
+export class DeliveryTracker {
+  /**
+   * @param {{ video: HTMLVideoElement, onTick?: (s: {db: number|null, face: boolean}) => void }} opts
+   */
+  constructor({ video, onTick = () => {} }) {
+    this.video = video;
+    this.onTick = onTick;
+    this.epoch = 0;
+    this.reset();
   }
 
-  let voice = null;
-  if (acc.words >= MIN_WORDS && acc.speakingMs > 5000) {
-    const minutes = acc.speakingMs / 60000;
-    const fillerCount = Object.values(acc.fillers).reduce((a, b) => a + b, 0);
-    voice = {
-      words: acc.words,
-      wpm: Math.round(acc.words / minutes),
-      fillerCount,
-      fillersPerMin: round1(fillerCount / minutes),
-      topFillers: Object.entries(acc.fillers).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([word, count]) => ({ word, count })),
-      longPauses: acc.pauses,
-      longPausesPerMin: round1(acc.pauses / minutes),
-      longestPauseSec: round1(acc.longestPauseMs / 1000),
-      volumeDb: acc.voicedTicks ? Math.round(acc.dbSum / acc.voicedTicks) : null,
-      pitchVariation: acc.f0Count >= 30 ? round1(std(acc.stSum, acc.stSq, acc.f0Count)) : null,
-      clarityPct: acc.confCount ? pct(acc.confSum, acc.confCount) : null,
-      fillerSource: acc.verbatimSegs >= acc.voiceSegs ? 'verbatim' : acc.verbatimSegs ? 'mixed' : 'browser',
-    };
+  reset() {
+    this.stop();
+    this.t0 = null;
+    this.faceFrames = []; // { t, face, phase: 'answer' | 'listen' }
+    this.smileBuckets = new Map(); // whole second → { sum, n }
+    this.marks = []; // { key, t } first time each question was answered
+    this.segment = null;
+    this.usedCamera = false;
+    this.usedMic = false;
+    this.pending = new Set(); // verbatim transcriptions in flight
   }
 
-  const flags = [];
-  for (const [area, data] of [['face', face], ['voice', voice]]) {
-    if (!data) continue;
-    for (const [metric, lim] of Object.entries(LIMITS)) {
-      const v = data[metric];
-      if (v == null) continue;
-      if (lim.min != null && v < lim.min) flags.push({ area, metric, message: lim.message.low ?? lim.message });
-      else if (lim.max != null && v > lim.max) flags.push({ area, metric, message: lim.message.high ?? lim.message });
+  get running() {
+    return Boolean(this.videoStream || this.audioStream);
+  }
+
+  now(at = performance.now()) {
+    return (at - this.t0) / 1000;
+  }
+
+  /** Opens the camera and microphone. Resolves to { camera, mic, errors }. */
+  async start() {
+    if (this.running || this.startingPromise) return this.startingPromise ?? { camera: Boolean(this.worker), mic: Boolean(this.audioCtx), errors: [] };
+    this.startingPromise = this._start().finally(() => {
+      this.startingPromise = null;
+    });
+    return this.startingPromise;
+  }
+
+  async _start() {
+    const epoch = ++this.epoch;
+    const state = { camera: false, mic: false, errors: [] };
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      state.errors.push('Delivery coaching needs localhost or HTTPS and a browser with camera and microphone support.');
+      return state;
+    }
+    this.t0 ??= performance.now();
+
+    let videoStream = null;
+    let audioStream = null;
+    try {
+      videoStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } },
+      });
+    } catch (e) {
+      state.errors.push(CAMERA_ERRORS[e.name] ?? `Camera unavailable (${e.message}), so smile and head-movement feedback is off.`);
+    }
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        // Raw levels are needed for loudness and pauses; echo cancellation keeps the interviewer's voice out.
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+      });
+    } catch (e) {
+      state.errors.push(MIC_ERRORS[e.name] ?? `Microphone unavailable (${e.message}), so pace, pause, and pitch feedback is off.`);
+    }
+    if (epoch !== this.epoch) {
+      [videoStream, audioStream].forEach((s) => s?.getTracks().forEach((t) => t.stop()));
+      return { camera: false, mic: false, errors: [] };
+    }
+
+    if (videoStream) {
+      this.videoStream = videoStream;
+      this.video.srcObject = videoStream;
+      await this.video.play().catch(() => {});
+      try {
+        await this._loadWorker(epoch);
+        if (epoch !== this.epoch) return state;
+        state.camera = true;
+        this.usedCamera = true;
+        this._startFaceLoop();
+      } catch (e) {
+        state.errors.push(e.message);
+        videoStream.getTracks().forEach((t) => t.stop());
+        this.videoStream = null;
+        this.video.srcObject = null;
+        this.worker?.terminate();
+        this.worker = null;
+      }
+    }
+
+    if (audioStream && epoch === this.epoch) {
+      try {
+        const ctx = new AudioContext();
+        const source = ctx.createMediaStreamSource(audioStream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        // Raw samples for the verbatim transcript. The processor only runs while
+        // connected to the output, so route it through a muted gain node.
+        const proc = ctx.createScriptProcessor(4096, 1, 1);
+        const mute = ctx.createGain();
+        mute.gain.value = 0;
+        source.connect(proc);
+        proc.connect(mute).connect(ctx.destination);
+        proc.onaudioprocess = (e) => {
+          if (this.segment) this._pushPcm(this.segment, e.inputBuffer.getChannelData(0), ctx.sampleRate);
+        };
+        await ctx.resume().catch(() => {});
+        this.audioStream = audioStream;
+        this.audioCtx = ctx;
+        this.analyser = analyser;
+        this.audioBuf = new Float32Array(analyser.fftSize);
+        state.mic = true;
+        this.usedMic = true;
+        this._startAudioLoop();
+      } catch (e) {
+        audioStream.getTracks().forEach((t) => t.stop());
+        state.errors.push(`Audio analysis could not start (${e.message}).`);
+      }
+    } else {
+      audioStream?.getTracks().forEach((t) => t.stop());
+    }
+    return state;
+  }
+
+  _loadWorker(epoch) {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL('./delivery-worker.js', import.meta.url));
+      this.worker = worker;
+      let loading = true;
+      const timeout = setTimeout(() => reject(new Error('Face tracking took too long to load, so smile and head-movement feedback is off.')), 45000);
+      worker.onmessage = ({ data }) => {
+        if (worker !== this.worker) return;
+        if (data.type === 'ready') {
+          loading = false;
+          clearTimeout(timeout);
+          resolve();
+        } else if (data.type === 'error') {
+          clearTimeout(timeout);
+          if (loading) reject(new Error(data.message));
+          else this._stopFace();
+        } else if (data.type === 'sample') {
+          if (this.flight?.timestamp === data.timestamp) this._clearFlight();
+          if (epoch === this.epoch) this._addFace(data.sample, data.timestamp);
+        }
+      };
+      worker.onerror = (event) => {
+        if (worker !== this.worker) return;
+        event.preventDefault();
+        clearTimeout(timeout);
+        if (loading) reject(new Error('Face tracking failed to start, so smile and head-movement feedback is off.'));
+        else this._stopFace();
+      };
+      worker.postMessage({ type: 'init' });
+    });
+  }
+
+  _startFaceLoop() {
+    clearInterval(this.faceLoop);
+    this.lastVideoTime = -1;
+    this.faceLoop = setInterval(() => this._capture(), 1000 / FACE_FPS);
+  }
+
+  async _capture() {
+    const video = this.video;
+    if (this.flight || !this.worker || video.readyState < 2 || video.currentTime === this.lastVideoTime || document.hidden) return;
+    const timestamp = performance.now();
+    const flight = { timestamp };
+    const worker = this.worker;
+    this.flight = flight;
+    this.lastVideoTime = video.currentTime;
+    try {
+      const scale = Math.min(1, 640 / video.videoWidth);
+      const bitmap = await createImageBitmap(video, {
+        resizeWidth: Math.max(1, Math.round(video.videoWidth * scale)),
+        resizeHeight: Math.max(1, Math.round(video.videoHeight * scale)),
+      });
+      if (worker !== this.worker) {
+        bitmap.close();
+        if (this.flight === flight) this._clearFlight();
+        return;
+      }
+      worker.postMessage({ type: 'frame', bitmap, timestamp }, [bitmap]);
+      flight.timeout = setTimeout(() => {
+        if (this.flight === flight) this._clearFlight();
+      }, 5000);
+    } catch {
+      if (this.flight === flight) this._clearFlight();
     }
   }
-  return face || voice ? { face, voice, flags } : null;
-}
 
-// ---------------------------------------------------------------------------
-
-export class DeliveryTracker {
-  constructor(video) {
-    this.video = video;
-    this.reset();
-    this.faceActive = false;
-    this.voiceActive = false;
-    this.landmarker = null;
-    this.faceStatus = 'idle'; // idle | loading | ready | failed
-    this.audio = null;
+  _clearFlight() {
+    clearTimeout(this.flight?.timeout);
+    this.flight = null;
   }
 
-  /** Clears all measurements (new interview). */
-  reset() {
-    this.segment = emptyAcc();
-    this.segments = []; // [{ recordId, acc }], one per answer
-    this.pending = new Set(); // verbatim transcriptions in flight
-    this._blinkOpen = true;
-    this._resetVoiceRun();
-    this._resetPcm();
+  _addFace(sample, timestamp) {
+    const t = this.now(timestamp);
+    this.faceFrames.push({ t, face: sample ?? null, phase: this.segment ? 'answer' : 'listen' });
+    if (Number.isFinite(sample?.smile)) {
+      const sec = Math.floor(t);
+      const b = this.smileBuckets.get(sec) ?? { sum: 0, n: 0 };
+      b.sum += sample.smile;
+      b.n += 1;
+      this.smileBuckets.set(sec, b);
+    }
+    this.lastFace = Boolean(sample);
   }
 
-  _resetPcm() {
-    this._pcm = [];
-    this._pcmLen = 0;
-    this._pcmPos = 0;
+  _startAudioLoop() {
+    clearInterval(this.audioLoop);
+    let ticks = 0;
+    this.audioLoop = setInterval(() => {
+      if (!this.analyser) return;
+      this.analyser.getFloatTimeDomainData(this.audioBuf);
+      const db = rmsDb(this.audioBuf);
+      if (this.segment) {
+        const f0 = db > PITCH_FLOOR_DB ? detectPitch(this.audioBuf, this.audioCtx.sampleRate) : null;
+        this.segment.audio.push({ t: this.now(), db, f0 });
+      }
+      this.lastDb = db;
+      if (++ticks % 2 === 0) this.onTick({ db, face: this.worker ? Boolean(this.lastFace) : null });
+    }, AUDIO_MS);
   }
 
-  _resetVoiceRun() {
-    this._hadVoice = false;
-    this._silenceMs = 0;
+  // ---- answer segments -----------------------------------------------------
+
+  /** Starts measuring one answer. `key` is the question id (e.g. "b2"), or null. */
+  beginSegment(key = null) {
+    if (this.t0 == null) return;
+    const start = this.now();
+    this.segment = { key, start, audio: [], typing: [], pcm: [], pcmLen: 0, pcmPos: 0 };
+    if (key && !this.marks.some((m) => m.key === key)) this.marks.push({ key, t: start });
   }
 
-  /** Measure only while it's the candidate's turn; voice only while dictating. */
-  setActive({ face, voice }) {
-    this.faceActive = face;
-    if (voice !== this.voiceActive) this._resetVoiceRun(); // gaps between turns aren't pauses
-    this.voiceActive = voice;
-    if (face) this._ensureFace();
-    if (voice) this._ensureAudio();
+  /** Records code-editor activity (for the think-aloud check on coding questions). */
+  noteTyping() {
+    const seg = this.segment;
+    if (!seg || this.t0 == null) return;
+    const t = this.now();
+    if (!seg.typing.length || t - seg.typing.at(-1) >= 0.25) seg.typing.push(t);
   }
 
   /**
-   * Closes the current answer and files it under a question.
-   * @param {string|null} recordId  question id, or null for intro / candidate questions
-   * @param {{ text: string, confidence: number }[]} heard  final dictated chunks for this answer
+   * Ends the current answer and returns its measurements, or null if none was running.
+   * `thinkAloud` adds the silent-stretch check (spoken answers to coding questions).
    */
-  endAnswer(recordId, heard = []) {
+  endSegment({ text = '', spokenText = '', thinkAloud = false } = {}) {
     const seg = this.segment;
-    for (const { text, confidence } of heard) {
-      seg.words += countWords(text);
-      if (confidence > 0) {
-        seg.confSum += confidence;
-        seg.confCount++;
-      }
-      addFillers(seg.fillers, text);
-    }
-    if (seg.words) seg.voiceSegs = 1;
-    this.segments.push({ recordId, acc: seg });
-
-    const wav = this._pcmLen >= PCM_RATE * MIN_AUDIO_SEC && seg.words ? encodeWav(this._pcm, this._pcmLen) : null;
-    this._resetPcm();
-    if (wav) this._transcribe(seg, wav);
-
-    this.segment = emptyAcc();
-    this._resetVoiceRun();
+    this.segment = null;
+    if (!seg) return null;
+    const face = this.faceFrames.filter((f) => f.t >= seg.start && f.phase === 'answer');
+    const part = {
+      key: seg.key,
+      audio: this.usedMic && seg.audio.length >= 20
+        ? summarizeAudio(seg.audio, { spokenText, typing: seg.typing, thinkAloud })
+        : null,
+      face: this.usedCamera && face.length ? summarizeFace(face, headBaseline(this.faceFrames)) : null,
+      fillers: countFillers(text),
+      words: countWords(text),
+    };
+    // Only spoken answers are transcribed; typed text keeps its own counts.
+    if (countWords(spokenText) && seg.pcmLen >= PCM_RATE * MIN_AUDIO_SEC) this._transcribe(part, encodeWav(seg.pcm, seg.pcmLen));
+    return part;
   }
 
-  _transcribe(seg, wav) {
+  /** Resamples to 16 kHz 16-bit and appends to the answer's audio. */
+  _pushPcm(seg, input, rate) {
+    if (seg.pcmLen >= PCM_RATE * MAX_ANSWER_SEC) return;
+    const step = rate / PCM_RATE;
+    const out = new Int16Array(Math.ceil((input.length - seg.pcmPos) / step));
+    let n = 0;
+    let t = seg.pcmPos;
+    for (; t < input.length; t += step) {
+      const x = Math.max(-1, Math.min(1, input[Math.floor(t)]));
+      out[n++] = x < 0 ? x * 0x8000 : x * 0x7fff;
+    }
+    seg.pcmPos = t - input.length;
+    seg.pcm.push(out.subarray(0, n));
+    seg.pcmLen += n;
+  }
+
+  /** Replaces the answer's dictated filler counts with verbatim ones when they arrive. */
+  _transcribe(part, wav) {
     const job = api.transcribe(wav)
       .then(({ text }) => {
         if (!text) return;
-        seg.words = countWords(text);
-        seg.fillers = {};
-        addFillers(seg.fillers, text);
-        seg.verbatimSegs = 1;
+        part.fillers = countFillers(text);
+        part.words = countWords(text);
       })
-      .catch((err) => console.warn('Verbatim transcription failed; using browser filler counts.', err))
+      .catch((err) => console.warn('Verbatim transcription failed; using dictated filler counts.', err))
       .finally(() => this.pending.delete(job));
     this.pending.add(job);
   }
@@ -201,213 +332,68 @@ export class DeliveryTracker {
     await Promise.race([Promise.allSettled([...this.pending]), new Promise((r) => setTimeout(r, ms))]);
   }
 
-  _merged(filter) {
-    const acc = emptyAcc();
-    for (const s of this.segments) if (filter(s)) mergeInto(acc, s.acc);
-    return acc;
+  cancelSegment() {
+    this.segment = null;
   }
 
-  summaryFor(recordId) {
-    return summarize(this._merged((s) => s.recordId === recordId));
+  /** Whole-interview data: smile timeline, question marks, and nodding while listening. */
+  sessionSummary() {
+    if (this.t0 == null) return null;
+    const listening = this.faceFrames.map((f) => (f.phase === 'listen' ? f : { t: f.t, face: null }));
+    const g = detectHeadGestures(listening);
+    let listenSeconds = 0;
+    for (let i = 1; i < listening.length; i++) {
+      const dt = listening[i].t - listening[i - 1].t;
+      if (listening[i].face && listening[i - 1].face && dt <= 0.3) listenSeconds += dt;
+    }
+    const timeline = [...this.smileBuckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([t, b]) => ({ t, smile: Math.round(b.sum / b.n) }));
+    return {
+      camera: this.usedCamera,
+      mic: this.usedMic,
+      duration: this.faceFrames.length ? Math.ceil(this.faceFrames.at(-1).t) : Math.ceil(this.now()),
+      timeline,
+      marks: [...this.marks],
+      listeningSeconds: Math.round(listenSeconds),
+      listeningNods: this.usedCamera ? g.nods.length : null,
+      listeningShakes: this.usedCamera ? g.shakes.length : null,
+    };
   }
 
-  summary() {
-    return summarize(this._merged(() => true));
+  // ---- teardown ------------------------------------------------------------
+
+  _stopFace() {
+    clearInterval(this.faceLoop);
+    this.faceLoop = null;
+    this._clearFlight();
+    this.worker?.terminate();
+    this.worker = null;
+    this.videoStream?.getTracks().forEach((t) => t.stop());
+    this.videoStream = null;
+    if (this.video) this.video.srcObject = null;
+    this.lastFace = false;
   }
 
+  /** Releases the camera and microphone. Collected data is kept until reset(). */
   stop() {
-    this.faceActive = false;
-    this.voiceActive = false;
-    clearInterval(this._faceTimer);
-    this._faceTimer = null;
-    if (this.audio) {
-      clearInterval(this.audio.timer);
-      this.audio.proc.onaudioprocess = null;
-      this.audio.stream.getTracks().forEach((t) => t.stop());
-      this.audio.ctx.close();
-      this.audio = null;
-    }
-  }
-
-  // ---- face ----------------------------------------------------------------
-
-  async _ensureFace() {
-    if (this.faceStatus === 'idle') {
-      this.faceStatus = 'loading';
-      try {
-        const { FaceLandmarker, FilesetResolver } = await import(`${MEDIAPIPE}/vision_bundle.mjs`);
-        const fileset = await FilesetResolver.forVisionTasks(`${MEDIAPIPE}/wasm`);
-        const options = (delegate) => ({
-          baseOptions: { modelAssetPath: FACE_MODEL, delegate },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          outputFaceBlendshapes: true,
-          outputFacialTransformationMatrixes: true,
-        });
-        this.landmarker = await FaceLandmarker.createFromOptions(fileset, options('GPU'))
-          .catch(() => FaceLandmarker.createFromOptions(fileset, options('CPU')));
-        this.faceStatus = 'ready';
-      } catch (err) {
-        console.warn('Face analysis unavailable:', err);
-        this.faceStatus = 'failed';
-        return;
-      }
-    }
-    if (this.faceStatus === 'ready' && !this._faceTimer) {
-      this._faceTimer = setInterval(() => this._faceTick(), FACE_MS);
-    }
-  }
-
-  _faceTick() {
-    const v = this.video;
-    if (!this.faceActive || !v.srcObject || v.readyState < 2) return;
-    let res;
-    try {
-      res = this.landmarker.detectForVideo(v, performance.now());
-    } catch {
-      return;
-    }
-    const seg = this.segment;
-    seg.frames++;
-    const shapes = res.faceBlendshapes?.[0]?.categories;
-    if (!shapes) return;
-    seg.faceFrames++;
-
-    const b = Object.fromEntries(shapes.map((c) => [c.categoryName, c.score]));
-    const avg = (l, r) => (b[l] + b[r]) / 2;
-
-    // Head pose from the 4x4 column-major transform.
-    const m = res.facialTransformationMatrixes?.[0]?.data;
-    const yaw = m ? (Math.atan2(m[8], m[10]) * 180) / Math.PI : 0;
-    const tilt = m ? (Math.asin(Math.max(-1, Math.min(1, -m[9]))) * 180) / Math.PI : 0;
-    seg.yawSum += yaw;
-    seg.yawSq += yaw * yaw;
-    seg.tiltSum += tilt;
-    seg.tiltSq += tilt * tilt;
-
-    const gazeSide = Math.max(b.eyeLookOutLeft, b.eyeLookInLeft, b.eyeLookOutRight, b.eyeLookInRight);
-    const gazeVert = Math.max(avg('eyeLookUpLeft', 'eyeLookUpRight'), avg('eyeLookDownLeft', 'eyeLookDownRight'));
-    if (Math.abs(yaw) > 20 || Math.abs(tilt) > 20 || gazeSide > 0.6 || gazeVert > 0.6) seg.awayFrames++;
-
-    if (avg('mouthSmileLeft', 'mouthSmileRight') > 0.4) seg.smileFrames++;
-    if (avg('browDownLeft', 'browDownRight') > 0.4 || avg('mouthFrownLeft', 'mouthFrownRight') > 0.35 || avg('mouthPressLeft', 'mouthPressRight') > 0.5) {
-      seg.tenseFrames++;
-    }
-
-    const closed = avg('eyeBlinkLeft', 'eyeBlinkRight') > 0.5;
-    if (closed && this._blinkOpen) seg.blinks++;
-    this._blinkOpen = !closed;
-  }
-
-  // ---- voice ---------------------------------------------------------------
-
-  async _ensureAudio() {
-    if (this.audio || this._audioPending || !navigator.mediaDevices?.getUserMedia) return;
-    this._audioPending = true;
-    try {
-      // AGC off so the level reflects how loudly they actually speak.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
-      });
-      const ctx = new AudioContext();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      // Raw samples for the verbatim transcript. The processor only runs while
-      // connected to the output, so route it through a muted gain node.
-      const proc = ctx.createScriptProcessor(4096, 1, 1);
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-      source.connect(proc);
-      proc.connect(mute).connect(ctx.destination);
-      proc.onaudioprocess = (e) => {
-        if (this.voiceActive) this._pushPcm(e.inputBuffer.getChannelData(0), ctx.sampleRate);
-      };
-      ctx.resume();
-
-      const buf = new Float32Array(analyser.fftSize);
-      this.audio = { stream, ctx, analyser, proc, buf, noiseDb: -60, timer: setInterval(() => this._audioTick(), AUDIO_MS) };
-    } catch (err) {
-      console.warn('Voice analysis unavailable:', err);
-    } finally {
-      this._audioPending = false;
-    }
-  }
-
-  /** Resamples to 16 kHz 16-bit and appends to the current answer's audio. */
-  _pushPcm(input, rate) {
-    if (this._pcmLen >= PCM_RATE * MAX_ANSWER_SEC) return;
-    const step = rate / PCM_RATE;
-    const out = new Int16Array(Math.ceil((input.length - this._pcmPos) / step));
-    let n = 0;
-    let t = this._pcmPos;
-    for (; t < input.length; t += step) {
-      const x = Math.max(-1, Math.min(1, input[Math.floor(t)]));
-      out[n++] = x < 0 ? x * 0x8000 : x * 0x7fff;
-    }
-    this._pcmPos = t - input.length;
-    this._pcm.push(out.subarray(0, n));
-    this._pcmLen += n;
-  }
-
-  _audioTick() {
-    const a = this.audio;
-    if (!this.voiceActive) return;
-    a.analyser.getFloatTimeDomainData(a.buf);
-    let sq = 0;
-    for (const x of a.buf) sq += x * x;
-    const db = 10 * Math.log10(sq / a.buf.length + 1e-12);
-
-    // Track the noise floor: fall fast, rise slowly.
-    a.noiseDb = db < a.noiseDb ? db : a.noiseDb + 0.05;
-    const voiced = db > Math.max(-58, a.noiseDb + 12);
-    const seg = this.segment;
-
-    if (voiced) {
-      if (this._hadVoice) {
-        if (this._silenceMs >= LONG_PAUSE_MS) {
-          seg.pauses++;
-          seg.longestPauseMs = Math.max(seg.longestPauseMs, this._silenceMs);
-        } else {
-          seg.speakingMs += this._silenceMs; // short gaps are part of normal speech
-        }
-      }
-      seg.speakingMs += AUDIO_MS;
-      this._silenceMs = 0;
-      this._hadVoice = true;
-
-      seg.voicedTicks++;
-      seg.dbSum += db;
-      const f0 = detectPitch(a.buf, a.ctx.sampleRate);
-      if (f0) {
-        const st = 12 * Math.log2(f0 / 100);
-        seg.f0Count++;
-        seg.stSum += st;
-        seg.stSq += st * st;
-      }
-    } else if (this._hadVoice) {
-      this._silenceMs += AUDIO_MS;
-    }
-  }
-}
-
-function countWords(text) {
-  return text.split(/\s+/).filter(Boolean).length;
-}
-
-function addFillers(into, text) {
-  for (const m of text.toLowerCase().matchAll(FILLER_RE)) {
-    const w = m[1].replace(/(.)\1+$/, '$1'); // "ummm" -> "um"
-    into[w] = (into[w] ?? 0) + 1;
+    this.epoch++;
+    this.segment = null;
+    this._stopFace();
+    clearInterval(this.audioLoop);
+    this.audioLoop = null;
+    this.audioStream?.getTracks().forEach((t) => t.stop());
+    this.audioStream = null;
+    this.audioCtx?.close().catch(() => {});
+    this.audioCtx = null;
+    this.analyser = null;
   }
 }
 
 /** 16 kHz mono 16-bit PCM chunks -> WAV blob. */
 function encodeWav(chunks, length) {
   const view = new DataView(new ArrayBuffer(44 + length * 2));
-  const str = (o, s) => [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
+  const str = (o, text) => [...text].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
   str(0, 'RIFF');
   view.setUint32(4, 36 + length * 2, true);
   str(8, 'WAVE');
@@ -429,29 +415,4 @@ function encodeWav(chunks, length) {
     }
   }
   return new Blob([view], { type: 'audio/wav' });
-}
-
-/** Autocorrelation pitch estimate in Hz (75-400), or null if not clearly voiced. */
-function detectPitch(buf, sampleRate) {
-  const n = buf.length;
-  const minLag = Math.floor(sampleRate / 400);
-  const maxLag = Math.min(Math.floor(sampleRate / 75), n - 1);
-  let energy = 0;
-  for (let i = 0; i < n; i++) energy += buf[i] * buf[i];
-  if (!energy) return null;
-
-  const corr = new Float32Array(maxLag + 1);
-  let best = 0;
-  for (let lag = minLag; lag <= maxLag; lag++) {
-    let c = 0;
-    for (let i = 0; i < n - lag; i++) c += buf[i] * buf[i + lag];
-    corr[lag] = (c / energy) * (n / (n - lag));
-    if (corr[lag] > best) best = corr[lag];
-  }
-  if (best < 0.6) return null;
-  // Take the shortest lag that is nearly as strong as the best, to avoid octave-down errors.
-  for (let lag = minLag + 1; lag < maxLag; lag++) {
-    if (corr[lag] >= 0.9 * best && corr[lag] >= corr[lag - 1] && corr[lag] >= corr[lag + 1]) return sampleRate / lag;
-  }
-  return null;
 }

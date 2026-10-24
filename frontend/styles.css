@@ -17,8 +17,6 @@
   --diff-easy: #1a7f4b;
   --diff-medium: #a86400;
   --diff-hard: #c0353a;
-  --tile-ok: #1a7f4b;
-  --tile-watch: #a86400;
   color-scheme: light;
 }
 
@@ -40,8 +38,6 @@
     --diff-easy: #4cc38a;
     --diff-medium: #f0b44c;
     --diff-hard: #f27a7e;
-    --tile-ok: #4cc38a;
-    --tile-watch: #f0b44c;
     color-scheme: dark;
   }
 }
@@ -63,8 +59,6 @@
   --diff-easy: #4cc38a;
   --diff-medium: #f0b44c;
   --diff-hard: #f27a7e;
-  --tile-ok: #4cc38a;
-  --tile-watch: #f0b44c;
   color-scheme: dark;
 }
 
@@ -78,6 +72,16 @@ body {
 }
 
 main { max-width: 860px; margin: 0 auto; padding: 16px 16px 48px; }
+.mode-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.mode-switch [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.camera-preview { position: relative; background: #10141a; border-radius: 10px; overflow: hidden; margin: 16px 0; aspect-ratio: 4 / 3; max-height: min(36vh, 320px); display: grid; place-items: center; }
+.camera-preview video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
+.camera-preview span { position: absolute; color: #cbd2dd; padding: 20px; text-align: center; }
+.metric-value { font-size: 1.65rem; font-weight: 650; margin: 8px 0; }
+.event-list { padding-left: 22px; }
+.event-list li { margin-bottom: 10px; }
+.event-list time { font-variant-numeric: tabular-nums; font-weight: 600; }
+#presentation-report:focus { outline: none; }
 h1 { font-size: 1.5rem; margin: 0 0 8px; }
 h2 { font-size: 1.15rem; margin: 24px 0 12px; }
 h3 { font-size: 1rem; margin: 0 0 8px; }
@@ -202,30 +206,44 @@ details summary { cursor: pointer; color: var(--accent); margin: 4px 0; }
 .rq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .pre { white-space: pre-wrap; }
 
+/* Voice and delivery coaching */
+.coach-bar { display: flex; gap: 12px; align-items: center; padding: 10px 12px; }
+.selfview { position: relative; flex: none; width: 112px; aspect-ratio: 4 / 3; border-radius: 8px; overflow: hidden; background: #10141a; }
+.selfview video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.face-dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%; background: #8a94a3; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35); }
+.face-dot.on { background: #3fbf6f; }
+.face-dot.off { background: #e0a43a; }
+.coach-status { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.voice-status { font-weight: 600; font-size: 0.95rem; }
+.voice-status:empty { display: none; }
+#voice-interim { font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#voice-interim:empty, #delivery-notice:empty { display: none; }
+.meter { height: 6px; max-width: 220px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.1s linear; }
+#mic-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+.chips { list-style: none; padding: 0; margin: 8px 0 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+.chips li { display: flex; gap: 8px; align-items: baseline; background: var(--surface-2); padding: 4px 10px; border-radius: 999px; font-size: 0.85rem; }
+.chips span { color: var(--muted); }
+.chips strong { font-variant-numeric: tabular-nums; }
+.delivery-block { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 4px; }
+.delivery h2 { margin-top: 0; }
+.timeline { margin: 8px 0 12px; }
+.timeline svg { width: 100%; height: auto; display: block; }
+.tl-line { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; }
+.tl-dot { fill: var(--accent); }
+.tl-grid { stroke: var(--border); stroke-width: 1; }
+.tl-threshold { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+.tl-mark { stroke: var(--muted); stroke-width: 1; opacity: 0.55; }
+.tl-label, .tl-axis { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.tl-label { font-weight: 600; }
+
 @media (max-width: 600px) {
+  .coach-bar { flex-wrap: wrap; }
+  .selfview { width: 88px; }
   .rq-grid { grid-template-columns: 1fr; }
   .bubble { max-width: 100%; }
   .msg-interviewer .bubble { max-width: calc(100% - 44px); }
-}
-
-/* Webcam + dictation */
-.media { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
-.cam {
-  position: relative; flex: none; width: 220px; aspect-ratio: 4 / 3;
-  border-radius: 12px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border);
-}
-.cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
-.cam-off { position: absolute; inset: 0; display: grid; place-items: center; }
-.rec-dot {
-  position: absolute; top: 8px; right: 8px; width: 12px; height: 12px; border-radius: 50%;
-  background: #e5484d; box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.3); animation: blink 1.4s infinite;
-}
-.media-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
-#mic-btn[aria-pressed="true"] { background: var(--danger); border-color: var(--danger); color: var(--surface); }
-
-@media (max-width: 600px) {
-  .media { flex-direction: column; align-items: stretch; }
-  .cam { width: 100%; }
 }
 
 /* LeetCode-style problem statement */
@@ -257,20 +275,3 @@ details summary { cursor: pointer; color: var(--accent); margin: 4px 0; }
 @media (max-width: 600px) {
   .transcript > .problem { margin-left: 0; }
 }
-
-/* Delivery report */
-.delivery h3 { margin: 20px 0 8px; }
-.delivery-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.delivery-head h2 { margin-top: 0; }
-.delivery-head .score { font-size: 1.4rem; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-.tile { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; border-left: 3px solid var(--tile-ok); }
-.tile-watch { border-left-color: var(--tile-watch); }
-.tile-label { font-size: 0.8rem; color: var(--muted); }
-.tile-value { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.tile-value small { font-size: 0.65em; font-weight: 400; color: var(--muted); }
-.tile-note { font-size: 0.75rem; color: var(--muted); }
-.tile-watch .tile-status { color: var(--tile-watch); }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
-.chip { font-size: 0.8rem; background: var(--surface-2); border-radius: 999px; padding: 2px 10px; }
-.flags { margin: 4px 0 0; padding-left: 20px; font-size: 0.9rem; }
