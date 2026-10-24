@@ -1,0 +1,456 @@
+{
+  "rubricVersion": "behavioral-v1.0-draft",
+  "proposedReportSchemaVersion": 2,
+  "status": "design_only_not_loaded_by_app",
+  "decisionStatus": "Proposed product choices; not a validated SWE assessment.",
+  "scope": {
+    "role": "Software Engineer",
+    "level": "Entry",
+    "language": "en",
+    "otherLevels": "Require separately reviewed anchor examples."
+  },
+  "dimensions": {
+    "relevance": {
+      "label": "Relevance and organization",
+      "weight": 1,
+      "anchors": {
+        "1": {
+          "id": "relevance.1",
+          "text": "Does not address the elicited behavior after clarification."
+        },
+        "2": {
+          "id": "relevance.2",
+          "text": "Related topic, but mostly generic or the relevant event remains unclear."
+        },
+        "3": {
+          "id": "relevance.3",
+          "text": "Relevant episode with a broadly followable sequence; some unnecessary context or missing links."
+        },
+        "4": {
+          "id": "relevance.4",
+          "text": "Directly addresses the behavior with sufficient context and clear progression."
+        },
+        "5": {
+          "id": "relevance.5",
+          "text": "Selects the most relevant details, makes stakes and causal links explicit, and resolves the question clearly."
+        }
+      }
+    },
+    "ownership": {
+      "label": "Ownership",
+      "weight": 1,
+      "anchors": {
+        "1": {
+          "id": "ownership.1",
+          "text": "Personal role cannot be identified after elicitation."
+        },
+        "2": {
+          "id": "ownership.2",
+          "text": "Names a role but contributions remain vague."
+        },
+        "3": {
+          "id": "ownership.3",
+          "text": "Names personal actions and distinguishes at least part of the team contribution."
+        },
+        "4": {
+          "id": "ownership.4",
+          "text": "Clearly explains responsibilities, personal actions, and relevant boundaries with others."
+        },
+        "5": {
+          "id": "ownership.5",
+          "text": "Also explains an accountable decision within that responsibility and how it affected the team or work."
+        }
+      }
+    },
+    "judgment": {
+      "label": "Judgment",
+      "weight": 1,
+      "anchors": {
+        "1": {
+          "id": "judgment.1",
+          "text": "No relevant decision or rationale after elicitation."
+        },
+        "2": {
+          "id": "judgment.2",
+          "text": "States what was done without an intelligible reason."
+        },
+        "3": {
+          "id": "judgment.3",
+          "text": "Gives a plausible reason tied to a relevant constraint."
+        },
+        "4": {
+          "id": "judgment.4",
+          "text": "Compares a meaningful alternative or tradeoff and explains the choice."
+        },
+        "5": {
+          "id": "judgment.5",
+          "text": "Also explains how evidence, uncertainty, or new information was used to test or revise the decision."
+        }
+      }
+    },
+    "collaboration": {
+      "label": "Collaboration",
+      "weight": 1,
+      "anchors": {
+        "1": {
+          "id": "collaboration.1",
+          "text": "No relevant interpersonal action after elicitation."
+        },
+        "2": {
+          "id": "collaboration.2",
+          "text": "Asserts teamwork or disagreement without explaining an interaction."
+        },
+        "3": {
+          "id": "collaboration.3",
+          "text": "Describes a concrete communication or coordination action."
+        },
+        "4": {
+          "id": "collaboration.4",
+          "text": "Explains another person's concern and an action that addresses it."
+        },
+        "5": {
+          "id": "collaboration.5",
+          "text": "Also explains how shared understanding, responsibilities, or a continuing disagreement were managed and checked."
+        }
+      }
+    },
+    "outcome": {
+      "label": "Outcome evidence",
+      "weight": 1,
+      "anchors": {
+        "1": {
+          "id": "outcome.1",
+          "text": "No outcome or assessment after elicitation."
+        },
+        "2": {
+          "id": "outcome.2",
+          "text": "Vague success or failure claim without an observable supporting detail."
+        },
+        "3": {
+          "id": "outcome.3",
+          "text": "Concrete outcome and at least one observation showing what happened."
+        },
+        "4": {
+          "id": "outcome.4",
+          "text": "Explains how the outcome was checked and connects it to the actions described."
+        },
+        "5": {
+          "id": "outcome.5",
+          "text": "Also distinguishes contribution from other causes, uncertainty, or limits in the outcome assessment."
+        }
+      }
+    },
+    "learning": {
+      "label": "Learning and adaptation",
+      "weight": 1,
+      "anchors": {
+        "1": {
+          "id": "learning.1",
+          "text": "No relevant learning or adjustment after elicitation."
+        },
+        "2": {
+          "id": "learning.2",
+          "text": "Generic lesson such as communicate better, without a concrete change."
+        },
+        "3": {
+          "id": "learning.3",
+          "text": "Specific lesson linked to an actionable change."
+        },
+        "4": {
+          "id": "learning.4",
+          "text": "Describes applying that change in a subsequent situation or a concrete follow-through."
+        },
+        "5": {
+          "id": "learning.5",
+          "text": "Also evaluates whether that change worked or identifies when to adapt it again."
+        }
+      }
+    }
+  },
+  "scorePolicy": {
+    "validScores": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "statuses": [
+      "scored",
+      "not_elicited",
+      "insufficient_capture",
+      "invalid_evidence",
+      "judge_disagreement",
+      "not_applicable"
+    ],
+    "missingValue": null,
+    "summaryDecimals": 1,
+    "questionSummary": "Mean of all predeclared dimensions only when every planned dimension is scored.",
+    "scopePolicy": {
+      "initial": "First substantive candidate response.",
+      "completed": "Initial response plus neutral follow-up responses.",
+      "primary": "completed"
+    },
+    "sessionSummary": "Equal mean of per-dimension means over fully scored questions. Require every planned session dimension covered and no attempted question with an unresolved summary.",
+    "sessionMinimumFullyScoredQuestions": 3,
+    "minimumDistinctQuestionsForDimensionTrend": 2,
+    "starWeight": 0,
+    "audioWeight": 0,
+    "visualWeight": 0,
+    "repairAttempts": 1,
+    "optionalReviewDisagreementThreshold": 1,
+    "wordChoiceWeight": 0
+  },
+  "star": {
+    "range": [
+      0,
+      8
+    ],
+    "unknownTotal": null,
+    "elements": {
+      "situation": [
+        "Missing",
+        "Broad background",
+        "Specific episode and relevant context"
+      ],
+      "task": [
+        "Missing",
+        "Vague goal or responsibility",
+        "Clear personal responsibility or objective"
+      ],
+      "action": [
+        "Missing",
+        "General behavior",
+        "Concrete personal steps"
+      ],
+      "result": [
+        "Missing",
+        "Unsupported outcome claim",
+        "Observable outcome, including a failure or partial result"
+      ]
+    }
+  },
+  "episodeTypes": [
+    "specific_episode",
+    "generic_pattern",
+    "hypothetical",
+    "unclear"
+  ],
+  "probePolicy": {
+    "version": "neutral-probes-v1-draft",
+    "maxFollowups": 2,
+    "priority": [
+      "specific_episode",
+      "personal_actions",
+      "rationale",
+      "other_perspective",
+      "outcome_assessment",
+      "learning"
+    ],
+    "scorePenalty": 0
+  },
+  "exampleQuestionTemplates": [
+    {
+      "id": "conflict-entry-v1",
+      "topic": "conflict",
+      "dimensions": [
+        "relevance",
+        "ownership",
+        "judgment",
+        "collaboration",
+        "outcome",
+        "learning"
+      ],
+      "prompt": "Tell me about a specific disagreement during a project. Explain your role, how and why you responded, the outcome, and what you learned.",
+      "note": "A single story prompt with explicit expectations. Guided mode elicits the elements one at a time."
+    },
+    {
+      "id": "ownership-entry-v1",
+      "topic": "ownership",
+      "dimensions": [
+        "relevance",
+        "ownership",
+        "judgment",
+        "outcome",
+        "learning"
+      ],
+      "prompt": "Tell me about a project responsibility you took ownership of. Explain your actions, why you chose them, what happened, and what you learned."
+    }
+  ],
+  "audio": {
+    "status": "Proposed extraction. The current build captures microphone audio in the browser and computes prosody (pauses, pace, articulation rate, pitch variation, rising endings, trailing off, think-aloud silence) with MACH-style settings that differ from this proposal; aligned word-level transcription is not implemented. See 'Current build status' in the methodology.",
+    "wordCount": "Spoken word tokens including vocalized uh/um, excluding punctuation, from versioned English tokenization.",
+    "answerSeconds": "First to last detected candidate speech per submitted segment, including internal silence; excludes app pauses, interviewer time, preparation and latency.",
+    "minWordsForWholeAnswerRates": 30,
+    "minAnswerSecondsForWholeAnswerRates": 10,
+    "minCaptureCoverage": 0.95,
+    "silentPauseMinSeconds": 0.25,
+    "timelineWindowSeconds": 15,
+    "minTimelineWindowWords": 10,
+    "wholeAnswerRateOnInternalRecordingLoss": null,
+    "metrics": {
+      "speakingRate": {
+        "formula": "60*N/Tanswer",
+        "unit": "words/minute"
+      },
+      "speechOnlyWordRate": {
+        "formula": "60*N/Tvoice",
+        "unit": "words/minute",
+        "optional": true
+      },
+      "articulationRate": {
+        "formula": "syllables/Tvoice",
+        "unit": "syllables/second",
+        "experimental": true,
+        "currentBuild": "words/soundingTime*60 (words per minute, pauses excluded); not syllable-based"
+      },
+      "silentPauseFrequency": {
+        "formula": "60*internalGapCount/Tanswer",
+        "unit": "pauses/minute"
+      },
+      "medianPause": {
+        "formula": "median(eligibleInternalGapDurations)",
+        "unit": "seconds"
+      },
+      "p90Pause": {
+        "formula": "nearest_rank_90(eligibleInternalGapDurations)",
+        "unit": "seconds"
+      },
+      "pauseFraction": {
+        "formula": "sum(eligibleInternalGapDurations)/Tanswer",
+        "unit": "fraction"
+      },
+      "fillerDensity": {
+        "formula": "100*fillerEvents/N",
+        "unit": "events/100 words"
+      },
+      "restarts": {
+        "formula": "100*verifiedRestartEvents/N",
+        "unit": "events/100 words",
+        "experimental": true
+      },
+      "answerDuration": {
+        "formula": "Tanswer",
+        "unit": "seconds"
+      },
+      "initialLatency": {
+        "formula": "firstSpeechTime-promptCompletionTime",
+        "unit": "seconds",
+        "optional": true
+      },
+      "clipping": {
+        "formula": "100*fullScaleSamples/validSamples",
+        "unit": "percent",
+        "fullScaleThreshold": 0.999
+      },
+      "captureCoverage": {
+        "formula": "validCandidateWindowSeconds/expectedCandidateWindowSeconds",
+        "unit": "fraction"
+      }
+    },
+    "universalPerformanceTargets": null
+  },
+  "wordChoice": {
+    "status": "planned_next; not implemented",
+    "source": "Transcript, typed or dictated; computed per answer in frontend/js/delivery-metrics.js",
+    "minWordsForRates": 30,
+    "scoringWeight": 0,
+    "repeatedPhrases": {
+      "ngram": 3,
+      "minOccurrencesPerAnswer": 3,
+      "excludeStopWordOnly": true,
+      "stripFillers": true,
+      "maxReported": 3,
+      "rate": null
+    },
+    "sentenceStarters": {
+      "typedUnits": "sentences split on . ? !",
+      "dictatedUnits": "speech-recognition final-result segments",
+      "minUnits": 4,
+      "flagShare": 0.4
+    },
+    "hedging": {
+      "phrases": [
+        "I just",
+        "I guess",
+        "I think maybe",
+        "I might be wrong",
+        "I feel like",
+        "I'm not sure"
+      ],
+      "unit": "events/100 words",
+      "excerptsRequired": true,
+      "excludedBecauseCountedAsFillers": [
+        "kind of",
+        "sort of"
+      ]
+    },
+    "answerLength": {
+      "units": [
+        "words",
+        "speakingSeconds"
+      ],
+      "scopes": [
+        "initial",
+        "withFollowups"
+      ],
+      "penalty": 0
+    },
+    "deferred": [
+      "non-inclusive language",
+      "type-token ratio",
+      "weak-word lists beyond hedging"
+    ],
+    "thresholdStatus": "Starting heuristics to tune on practice transcripts."
+  },
+  "visual": {
+    "processing": "local",
+    "baselineSeconds": 3,
+    "smoothingSeconds": 0.25,
+    "maxContinuousGapSeconds": 0.5,
+    "currentMinValidSeconds": 5,
+    "proposedInterviewMinValidSeconds": 10,
+    "proposedInterviewMinCoverage": 0.7,
+    "eventMinSeconds": 2,
+    "head": {
+      "yawDegrees": 25,
+      "pitchDegrees": 20,
+      "proportionDenominator": "valid head-tracking seconds",
+      "percentageIncludesBriefEvents": true,
+      "interpretation": "head orientation, not eye gaze"
+    },
+    "shift": {
+      "shoulderWidths": 0.3,
+      "denominator": "current shoulder width",
+      "optional": true,
+      "calibrationMinShoulderShare": 0.5
+    },
+    "gesture": {
+      "speedShoulderWidthsPerSecond": 0.35,
+      "optional": true,
+      "monotonicQualityInterpretation": false
+    },
+    "lighting": {
+      "experimental": true,
+      "luminanceExtremes": [
+        0.02,
+        0.98
+      ],
+      "automaticAdviceEnabled": false
+    },
+    "framing": {
+      "implemented": false,
+      "detectorFailure": "unknown, not automatically out of frame"
+    },
+    "scoringWeight": 0
+  },
+  "releaseTargets": {
+    "status": "Proposed pilot targets, not externally validated standards or current results.",
+    "ratingMAEPerDimension": 0.6,
+    "withinOnePointFractionPerDimension": 0.9,
+    "fillerF1": 0.85,
+    "medianPauseDurationAbsoluteErrorSeconds": 0.1,
+    "visualEventPrecision": 0.85,
+    "uncertainty": "Report confidence intervals clustered by participant and subgroup sample sizes."
+  }
+}

@@ -1,7 +1,7 @@
 import { InterviewSession, STAR_TIP } from './interview.js';
 import { api } from './api.js';
 import { renderReport, renderProblem, escapeHtml } from './report.js';
-import { Camera, Dictation } from './media.js';
+import { Dictation, Speaker, voiceSupport } from './voice.js';
 import { DeliveryTracker } from './delivery.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -10,12 +10,24 @@ const els = {
   screens: { setup: $('#screen-setup'), interview: $('#screen-interview'), report: $('#screen-report') },
   setupForm: $('#setup-form'),
   keyWarning: $('#key-warning'),
+  voiceSupport: $('#voice-support'),
   progress: $('#progress'),
   roleLine: $('#role-line'),
   timer: $('#timer'),
   starBtn: $('#star-btn'),
   starTip: $('#star-tip'),
   endBtn: $('#end-btn'),
+  coachBar: $('#coach-bar'),
+  selfview: $('#selfview'),
+  selfviewWrap: $('#selfview-wrap'),
+  faceDot: $('#face-dot'),
+  voiceStatus: $('#voice-status'),
+  voiceInterim: $('#voice-interim'),
+  micMeterWrap: $('#mic-meter-wrap'),
+  micMeter: $('#mic-meter'),
+  deliveryNotice: $('#delivery-notice'),
+  skipBtn: $('#skip-voice'),
+  micBtn: $('#mic-btn'),
   transcript: $('#transcript'),
   typing: $('#typing'),
   error: $('#error'),
@@ -39,19 +51,46 @@ const els = {
   retryWeakBtn: $('#retry-weak-btn'),
   newBtn: $('#new-btn'),
   themeToggle: $('#theme-toggle'),
-  camVideo: $('#cam-video'),
-  camOff: $('#cam-off'),
-  camBtn: $('#cam-btn'),
-  recDot: $('#rec-dot'),
-  micBtn: $('#mic-btn'),
-  micStatus: $('#mic-status'),
 };
 
 let session = null;
 let busy = false;
+let sending = false;
 let lastReport = null;
+let lastSessionDelivery = null;
 let timerHandle = null;
 let codeFor = null; // record id the code editor currently belongs to
+
+// Voice and delivery state
+let handoff = 0; // bumping this cancels a pending "finish speaking, then listen" hand-off
+let floorOpen = false; // the candidate's turn to answer is open
+let speaking = false;
+let spokenText = ''; // words dictated into the current answer
+let speechBlocked = false; // dictation failed this interview; don't auto-restart it
+const speaker = new Speaker();
+const tracker = new DeliveryTracker({ video: els.selfview, onTick: showLevel });
+const dictation = new Dictation({
+  onText: (text) => {
+    if (!floorOpen) return;
+    const box = els.answer;
+    box.value = box.value.trim() ? `${box.value.trimEnd()} ${text}` : text;
+    spokenText = `${spokenText} ${text}`.trim();
+    box.scrollTop = box.scrollHeight;
+  },
+  onInterim: (text) => {
+    els.voiceInterim.textContent = text;
+  },
+  onState: (listening) => {
+    els.micBtn.textContent = listening ? 'Stop mic' : 'Speak';
+    els.micBtn.setAttribute('aria-pressed', String(listening));
+    if (listening) setVoiceStatus('Listening… Press Send (Ctrl+Enter) when you finish your answer.');
+    else if (floorOpen && !speaking && !speechBlocked) setVoiceStatus('Mic off. Press Speak to talk, or type your answer.');
+  },
+  onError: (message) => {
+    speechBlocked = true;
+    setVoiceStatus(message);
+  },
+});
 
 // Proactive hints: if the candidate goes quiet on a technical question, the interviewer checks in.
 const QUIET_BEFORE_HINT = { coding: 150, sql: 150, other: 90 }; // seconds
@@ -87,13 +126,13 @@ els.themeToggle.addEventListener('click', () => {
 
 function show(name) {
   for (const [key, el] of Object.entries(els.screens)) el.hidden = key !== name;
-  if (name !== 'interview') stopMedia();
   window.scrollTo({ top: 0 });
 }
 
 async function checkHealth() {
   try {
     const h = await api.health();
+    if (h.transcriber === 'deepgram') $('#transcriber').textContent = 'Deepgram';
     if (!h.hasKey) {
       els.keyWarning.hidden = false;
       els.keyWarning.textContent =
@@ -103,6 +142,17 @@ async function checkHealth() {
     els.keyWarning.hidden = false;
     els.keyWarning.textContent = 'Could not reach the server. Start it with npm start.';
   }
+}
+
+function describeVoiceSupport() {
+  const notes = [];
+  if (voiceSupport.dictation) {
+    notes.push("Speech-to-text uses your browser's speech service (Chrome sends the audio to Google to transcribe it).");
+  } else {
+    notes.push('Speech-to-text is not available in this browser, so you will type your answers. Use Google Chrome or Edge to talk.');
+  }
+  if (!voiceSupport.speech) notes.push('This browser cannot read questions aloud.');
+  els.voiceSupport.textContent = notes.join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -120,15 +170,20 @@ els.setupForm.addEventListener('submit', (e) => {
     length: f.get('length'),
     model: f.get('model'),
     timer: f.get('timer') === 'on',
+    voice: f.get('voice') === 'on',
+    delivery: f.get('delivery') === 'on',
     autoHints: f.get('autoHints') === 'on',
   });
 });
 
 function startInterview(setup) {
+  finishMedia();
+  tracker.reset();
+  lastSessionDelivery = null;
+  speechBlocked = false;
+  speaker.enabled = Boolean(setup.voice);
   session = new InterviewSession(setup);
   lastReport = null;
-  delivery.reset();
-  dictation.takeHeard();
   codeFor = null;
   els.transcript.innerHTML = '';
   els.answer.value = '';
@@ -137,11 +192,136 @@ function startInterview(setup) {
   els.starBtn.setAttribute('aria-expanded', 'false');
   els.roleLine.textContent = `${setup.level} ${setup.role}${setup.companyType ? ` · ${setup.companyType}` : ''}${setup.retry ? ' · Retry of weak questions' : ''}`;
   hideError();
+  setupCoachBar();
   show('interview');
-  startMedia();
   startTimer();
+  if (setup.delivery) startTracker();
   runTurn(session.prepareOpen());
 }
+
+// ---------------------------------------------------------------------------
+// Voice and delivery
+
+function setupCoachBar() {
+  const { voice, delivery } = session.setup;
+  els.coachBar.hidden = !voice && !delivery;
+  els.selfviewWrap.hidden = true;
+  els.micMeterWrap.hidden = true;
+  els.voiceInterim.textContent = '';
+  els.deliveryNotice.textContent = delivery ? '' : 'Delivery feedback is off for this interview.';
+  setVoiceStatus('');
+}
+
+async function startTracker() {
+  const current = session;
+  els.deliveryNotice.textContent = 'Starting camera and microphone…';
+  const state = await tracker.start();
+  if (session !== current || !session?.setup.delivery) return;
+  els.selfviewWrap.hidden = !state.camera;
+  els.micMeterWrap.hidden = !state.mic;
+  const on = [state.camera && 'camera', state.mic && 'microphone'].filter(Boolean);
+  els.deliveryNotice.textContent = [
+    on.length ? `Measuring delivery with your ${on.join(' and ')}. Nothing is saved.` : '',
+    ...state.errors,
+  ].filter(Boolean).join(' ');
+  // The first question may have been waiting for the devices.
+  if (floorOpen && !tracker.segment) tracker.beginSegment(currentKey());
+}
+
+function showLevel({ db, face }) {
+  const level = Math.min(1, Math.max(0, (db + 70) / 50));
+  els.micMeter.style.width = `${Math.round(level * 100)}%`;
+  els.faceDot.className = `face-dot${face == null ? '' : face ? ' on' : ' off'}`;
+  els.faceDot.title = face == null ? 'Face tracking off' : face ? 'Face tracked' : 'Face not visible';
+}
+
+function setVoiceStatus(text) {
+  els.voiceStatus.textContent = text;
+}
+
+function setSpeaking(on) {
+  speaking = on;
+  els.skipBtn.hidden = !on;
+  if (on) setVoiceStatus('Jordan is speaking… (press Esc or Skip to answer now)');
+  updateChrome();
+}
+
+const currentKey = () => (session?.inRound ? session.record?.id ?? null : null);
+
+/** After the interviewer replies: read it aloud (if voice is on), then open the candidate's turn. */
+async function handOff(text) {
+  const id = ++handoff;
+  if (session.setup.voice && speaker.available) {
+    setSpeaking(true);
+    await speaker.speak(text);
+    if (id !== handoff) return;
+    setSpeaking(false);
+  }
+  if (id !== handoff || !session) return;
+  if (session.done) {
+    finishMedia();
+    setVoiceStatus('Interview complete.');
+    scheduleReport(); // open the feedback report once the goodbye has been read
+    return;
+  }
+  openFloor();
+}
+
+function openFloor() {
+  floorOpen = true;
+  spokenText = '';
+  markActivity(); // the quiet clock starts when the candidate's turn opens
+  tracker.beginSegment(currentKey());
+  if (session.setup.voice && voiceSupport.dictation && !speechBlocked) dictation.start();
+  else if (!speechBlocked) setVoiceStatus(session.setup.voice ? 'Type your answer, then press Send.' : '');
+  updateChrome();
+}
+
+/** Closes the candidate's turn without scoring it (hint request, ending early, switching modes). */
+async function closeFloor() {
+  handoff++;
+  if (speaking) {
+    speaker.cancel();
+    setSpeaking(false);
+  }
+  if (dictation.listening) await dictation.stopAndFlush();
+  tracker.cancelSegment();
+  floorOpen = false;
+  els.voiceInterim.textContent = '';
+}
+
+/** Releases the camera and microphone and stops all speech. Collected measurements are kept. */
+function finishMedia() {
+  handoff++;
+  speaker.cancel();
+  speaking = false;
+  els.skipBtn.hidden = true;
+  dictation.stop();
+  tracker.stop();
+  floorOpen = false;
+  els.selfviewWrap.hidden = true;
+  els.micMeterWrap.hidden = true;
+  els.voiceInterim.textContent = '';
+}
+
+els.skipBtn.addEventListener('click', () => speaker.cancel());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && speaking) speaker.cancel();
+});
+els.micBtn.addEventListener('click', () => {
+  if (speaking) {
+    speaker.cancel(); // the hand-off then opens the mic
+    return;
+  }
+  if (!floorOpen) return;
+  if (dictation.listening) {
+    dictation.stop();
+  } else {
+    speechBlocked = false;
+    dictation.start();
+  }
+});
+window.addEventListener('pagehide', finishMedia);
 
 // ---------------------------------------------------------------------------
 // Transcript
@@ -177,16 +357,17 @@ function appendMessage(role, text, code = '', problem = null) {
 async function runTurn(prepared) {
   if (busy) return;
   busy = true;
+  floorOpen = false;
   hideError();
   els.typing.hidden = false;
   els.typing.scrollIntoView({ behavior: 'smooth', block: 'end' });
   updateChrome();
+  let reply = null;
   try {
     const res = await api.interview(prepared.payload);
     prepared.commit(res);
     appendMessage('interviewer', res.text, '', res.problem);
-    markActivity(); // the quiet clock restarts after every interviewer turn
-    if (session.done) scheduleReport();
+    reply = res.text;
   } catch (err) {
     showError(err.message, () => runTurn(prepared));
   } finally {
@@ -194,6 +375,7 @@ async function runTurn(prepared) {
     els.typing.hidden = true;
     updateChrome();
   }
+  if (reply != null && session) handOff(reply);
 }
 
 els.composer.addEventListener('submit', (e) => {
@@ -208,24 +390,42 @@ els.answer.addEventListener('keydown', (e) => {
   }
 });
 
-function sendAnswer() {
-  if (busy || !session || session.done || !els.error.hidden) return;
-  const coding = session.isCodingQuestion();
-  const text = els.answer.value;
-  const code = coding ? els.code.value : '';
-  if (!text.trim() && !code.trim()) return;
+async function sendAnswer() {
+  if (busy || sending || !session || session.done || !els.error.hidden) return;
+  sending = true;
+  try {
+    if (speaking) {
+      // Answering before Jordan finishes: stop the voice and skip the hand-off.
+      handoff++;
+      speaker.cancel();
+      setSpeaking(false);
+    }
+    if (dictation.listening) await dictation.stopAndFlush();
+    const coding = session.isCodingQuestion();
+    const text = els.answer.value;
+    const code = coding ? els.code.value : '';
+    if (!text.trim() && !code.trim()) {
+      if (floorOpen && session.setup.voice && voiceSupport.dictation && !speechBlocked) dictation.start();
+      return;
+    }
 
-  // File this answer's delivery measurements under the question being answered.
-  delivery.endAnswer(session.inRound ? session.record?.id : null, dictation.takeHeard());
-  const prepared = session.prepareAnswer({ text, code, explanation: text });
-  appendMessage('candidate', prepared.display.text, prepared.display.code);
-  els.answer.value = '';
-  dictation.base = '';
-  runTurn(prepared);
+    // Think-aloud check only applies when the candidate is expected to talk through code.
+    const delivery = tracker.endSegment({ text, spokenText, thinkAloud: coding && session.setup.voice });
+    floorOpen = false;
+    const prepared = session.prepareAnswer({ text, code, explanation: text, delivery });
+    appendMessage('candidate', prepared.display.text, prepared.display.code);
+    els.answer.value = '';
+    spokenText = '';
+    els.voiceInterim.textContent = '';
+    runTurn(prepared);
+  } finally {
+    sending = false;
+  }
 }
 
-els.hintBtn.addEventListener('click', () => {
-  if (busy || !session?.canHint() || !els.error.hidden) return;
+els.hintBtn.addEventListener('click', async () => {
+  if (busy || sending || !session?.canHint() || !els.error.hidden) return;
+  await closeFloor();
   const prepared = session.prepareHint();
   appendMessage('candidate', prepared.display.text);
   runTurn(prepared);
@@ -235,13 +435,17 @@ function markActivity() {
   lastActivityAt = Date.now();
 }
 
-/** Typing, dictation, and code edits all change the inputs; no change for a while means they're stuck. */
+/**
+ * Typing, dictation (including words still being recognized), and code edits all
+ * change the inputs; no change for a while on an open turn means they're stuck.
+ */
 function checkQuiet() {
-  if (!session?.setup.autoHints || busy || session.done || !els.error.hidden || !session.canHint()) {
+  if (!session?.setup.autoHints || busy || sending || speaking || !floorOpen || session.done
+    || !els.error.hidden || !session.canHint()) {
     markActivity();
     return;
   }
-  const snapshot = `${els.answer.value}\u0000${els.code.value}`;
+  const snapshot = `${els.answer.value}\u0000${els.code.value}\u0000${els.voiceInterim.textContent}`;
   if (snapshot !== lastInputSnapshot) {
     lastInputSnapshot = snapshot;
     markActivity();
@@ -249,21 +453,34 @@ function checkQuiet() {
   }
   const limit = QUIET_BEFORE_HINT[session.planItem?.type] ?? QUIET_BEFORE_HINT.other;
   const quiet = Math.round((Date.now() - lastActivityAt) / 1000);
-  if (quiet >= limit) runTurn(session.prepareHint({ idleSeconds: quiet }));
+  if (quiet >= limit) offerHint(quiet);
 }
 
-els.endBtn.addEventListener('click', () => {
+/** The interviewer checks in with a hint after a quiet stretch. */
+async function offerHint(idleSeconds) {
+  sending = true;
+  try {
+    await closeFloor();
+    runTurn(session.prepareHint({ idleSeconds }));
+  } finally {
+    sending = false;
+  }
+}
+
+els.endBtn.addEventListener('click', async () => {
   if (!session || busy) return;
   if (session.done) return goToReport();
   if (!session.answeredRecords().length) {
     if (confirm('End the interview? Nothing has been answered yet, so there is nothing to score.')) {
       stopTimer();
+      finishMedia();
       show('setup');
     }
     return;
   }
   if (!confirm('End the interview now and go to feedback?')) return;
   hideError();
+  await closeFloor();
   const prepared = session.prepareEnd();
   appendMessage('candidate', prepared.display.text);
   runTurn(prepared);
@@ -314,10 +531,9 @@ function updateChrome() {
   els.endBtn.textContent = session.done ? 'Go to feedback' : 'End interview';
   for (const el of [els.answer, els.code, els.sendBtn, els.hintBtn]) el.disabled = busy;
   if (!session.canHint()) els.hintBtn.disabled = true;
-  // Don't transcribe while the interviewer is replying or after the interview ends.
-  dictation.setPaused(busy);
-  if (session.done) dictation.stop();
-  syncDelivery();
+
+  els.micBtn.hidden = !session.setup.voice || !voiceSupport.dictation || session.done;
+  els.micBtn.disabled = busy || (!floorOpen && !speaking);
 
   els.timer.hidden = !session.setup.timer || session.questionSeconds() == null;
   if (session.done) stopTimer();
@@ -338,72 +554,6 @@ function stopTimer() {
   clearInterval(timerHandle);
   timerHandle = null;
 }
-
-// ---------------------------------------------------------------------------
-// Webcam and dictation
-
-const camera = new Camera(els.camVideo);
-const delivery = new DeliveryTracker(els.camVideo);
-const dictation = new Dictation(els.answer, ({ listening, error }) => {
-  syncDelivery();
-  els.micBtn.setAttribute('aria-pressed', String(dictation.wanted));
-  els.micBtn.textContent = dictation.wanted ? 'Stop speaking' : 'Start speaking';
-  els.recDot.hidden = !listening;
-  if (error) els.micStatus.textContent = error;
-  else if (listening) els.micStatus.textContent = 'Listening… your words appear in the answer box.';
-  else if (dictation.wanted) els.micStatus.textContent = 'Mic paused while the interviewer responds.';
-  else els.micStatus.textContent = 'Mic off. Click Start speaking, or type below.';
-});
-
-if (!Dictation.supported) {
-  els.micBtn.disabled = true;
-  els.micStatus.textContent = 'Voice transcription is not supported in this browser (try Chrome or Edge). You can type instead.';
-}
-
-function updateCamChrome() {
-  els.camOff.hidden = camera.on;
-  els.camBtn.textContent = camera.on ? 'Turn camera off' : 'Turn camera on';
-  syncDelivery();
-}
-
-/** Measure face and voice only during the candidate's turn, and voice only while dictating. */
-function syncDelivery() {
-  const turn = Boolean(session) && !busy && !session.done && !els.screens.interview.hidden;
-  delivery.setActive({ face: turn && camera.on, voice: turn && dictation.listening });
-}
-
-async function startCamera() {
-  try {
-    await camera.start();
-  } catch (err) {
-    els.camOff.textContent = err.name === 'NotAllowedError' ? 'Camera blocked' : 'No camera found';
-  }
-  updateCamChrome();
-}
-
-function startMedia() {
-  startCamera();
-  if (Dictation.supported) dictation.start();
-}
-
-function stopMedia() {
-  camera.stop();
-  dictation.stop();
-  delivery.stop();
-  updateCamChrome();
-}
-
-els.camBtn.addEventListener('click', () => {
-  if (camera.on) {
-    camera.stop();
-    els.camOff.textContent = 'Camera off';
-    updateCamChrome();
-  } else {
-    startCamera();
-  }
-});
-
-els.micBtn.addEventListener('click', () => dictation.toggle());
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -430,6 +580,8 @@ els.errorRetry.addEventListener('click', () => {
 
 // ---------------------------------------------------------------------------
 // Code editor: Tab / Shift+Tab indentation
+
+els.code.addEventListener('input', () => tracker.noteTyping());
 
 const INDENT = '    ';
 els.code.addEventListener('keydown', (e) => {
@@ -477,6 +629,8 @@ function scheduleReport() {
 function goToReport() {
   clearTimeout(reportTimer);
   stopTimer();
+  finishMedia();
+  lastSessionDelivery = session?.setup.delivery ? tracker.sessionSummary() : null;
   show('report');
   loadReport();
 }
@@ -488,33 +642,20 @@ async function loadReport() {
   els.retryWeakBtn.hidden = true;
   els.reportLoading.hidden = false;
   try {
-    await delivery.settle(); // let verbatim filler counts land first
-    const payload = session.evaluationPayload();
-    const measured = deliverySummaries(payload.records.map((r) => r.id));
-    for (const r of payload.records) r.delivery = measured.byRecord[r.id];
-    payload.delivery = measured.overall;
-    const result = await api.evaluate(payload);
+    await tracker.settle(); // let verbatim filler counts land first
+    const result = await api.evaluate(session.evaluationPayload(lastSessionDelivery));
     lastReport = result.ok ? result.report : null;
-    renderReport(els.report, session, result, measured);
+    renderReport(els.report, session, result, lastSessionDelivery);
     els.rescoreBtn.hidden = result.ok;
     els.retryWeakBtn.hidden = false;
   } catch (err) {
     els.reportError.hidden = false;
     els.reportError.textContent = err.message;
     els.rescoreBtn.hidden = err.code === 'NOTHING_TO_SCORE';
-    if (session.answeredRecords().length) {
-      renderReport(els.report, session, { ok: false }, deliverySummaries(session.answeredRecords().map((r) => r.id)));
-    }
+    if (session.answeredRecords().length) renderReport(els.report, session, { ok: false }, lastSessionDelivery);
   } finally {
     els.reportLoading.hidden = true;
   }
-}
-
-function deliverySummaries(ids) {
-  return {
-    overall: delivery.summary(),
-    byRecord: Object.fromEntries(ids.map((id) => [id, delivery.summaryFor(id)])),
-  };
 }
 
 els.retryWeakBtn.addEventListener('click', () => {
@@ -524,8 +665,10 @@ els.retryWeakBtn.addEventListener('click', () => {
 
 els.newBtn.addEventListener('click', () => {
   stopTimer();
+  finishMedia();
   session = null;
   show('setup');
 });
 
+describeVoiceSupport();
 checkHealth();

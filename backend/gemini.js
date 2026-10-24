@@ -2,7 +2,9 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 export const MODELS = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it'];
-export const DEFAULT_MODEL = 'gemma-4-31b-it';
+export const DEFAULT_MODEL = 'gemma-4-26b-a4b-it';
+// Used when the requested model keeps returning server errors.
+const FALLBACK_MODEL = 'gemma-4-26b-a4b-it';
 
 const THINKING = {
   minimal: ThinkingLevel?.MINIMAL ?? 'MINIMAL',
@@ -46,13 +48,19 @@ export function resolveModel(model) {
  *
  * If the model rejects system instructions or the thinking config, retries once
  * per problem with that feature adapted (system prompt inlined / thinking dropped).
+ * Transient server errors (500/503/504) are retried with exponential backoff, then
+ * the request falls back to FALLBACK_MODEL once. Requests to other models that hang
+ * past REQUEST_TIMEOUT_MS fall back too.
  */
 export async function generate({ model, systemInstruction, contents, thinking = 'minimal', temperature }) {
   const ai = getClient();
   let inlineSystem = false;
   let useThinking = true;
+  let transientRetries = 0;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Terminates: each adaptation flag flips at most once, transient retries are capped,
+  // and the model falls back at most once.
+  for (;;) {
     const config = {};
     if (temperature != null) config.temperature = temperature;
     if (useThinking) config.thinkingConfig = { thinkingLevel: THINKING[thinking] ?? THINKING.minimal };
@@ -63,11 +71,22 @@ export async function generate({ model, systemInstruction, contents, thinking = 
       else config.systemInstruction = systemInstruction;
     }
 
+    // Only time out when there is a model to fall back to; the fallback gets as long as it needs.
+    const canFallBack = model !== FALLBACK_MODEL;
+    const signal = canFallBack ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : undefined;
+    if (signal) config.abortSignal = signal;
+
     try {
       const res = await ai.models.generateContent({ model, contents: reqContents, config });
       return extractText(res);
     } catch (err) {
       if (err instanceof AppError) throw err;
+      if (signal?.aborted) {
+        console.warn(`${model} timed out after ${REQUEST_TIMEOUT_MS / 1000}s; falling back to ${FALLBACK_MODEL}`);
+        model = FALLBACK_MODEL;
+        transientRetries = 0;
+        continue;
+      }
       const status = err?.status;
       const msg = String(err?.message ?? '');
       if (status === 400 && !inlineSystem && /system[_ ]?instruction|developer instruction/i.test(msg)) {
@@ -78,10 +97,28 @@ export async function generate({ model, systemInstruction, contents, thinking = 
         useThinking = false;
         continue;
       }
+      if (TRANSIENT_STATUSES.has(status) && transientRetries < MAX_TRANSIENT_RETRIES) {
+        await sleep(1000 * 2 ** transientRetries);
+        transientRetries++;
+        continue;
+      }
+      if (TRANSIENT_STATUSES.has(status) && canFallBack) {
+        console.warn(`${model} unavailable (${status}); falling back to ${FALLBACK_MODEL}`);
+        model = FALLBACK_MODEL;
+        transientRetries = 0;
+        continue;
+      }
       throw toAppError(err);
     }
   }
-  throw new AppError(502, 'UPSTREAM_ERROR', 'The model request failed after several attempts.');
+}
+
+const TRANSIENT_STATUSES = new Set([500, 503, 504]);
+const MAX_TRANSIENT_RETRIES = 3;
+const REQUEST_TIMEOUT_MS = 60_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function inlineSystemPrompt(contents, systemInstruction) {
