@@ -1,5 +1,6 @@
-// Live delivery tracking during the interview (MACH-style): the webcam feeds a face
-// worker (smiles, nods, head direction) and the microphone feeds prosody analysis
+// Live delivery tracking during the interview (MACH-style): the webcam feeds a
+// worker (face: smiles, nods, head direction; body: side-to-side movement,
+// gestures) and the microphone feeds prosody analysis
 // (pauses, pitch, loudness). Everything runs on this device; only the derived
 // numbers are sent to the server with the transcript for feedback. The one
 // exception: a spoken answer's audio is sent for a verbatim transcript, because
@@ -7,7 +8,8 @@
 // counts replace the dictated ones. Nothing is stored.
 import { api } from './api.js';
 import {
-  summarizeAudio, summarizeFace, headBaseline, detectHeadGestures, countFillers, countWords, rmsDb, detectPitch,
+  summarizeAudio, summarizeFace, headBaseline, summarizeBody, bodyBaseline, detectHeadGestures, countFillers, countWords,
+  rmsDb, detectPitch,
 } from './delivery-metrics.js';
 
 const FACE_FPS = 15;
@@ -18,9 +20,9 @@ const MAX_ANSWER_SEC = 300; // cap per-answer audio (~9.6 MB of WAV)
 const MIN_AUDIO_SEC = 2;
 
 const CAMERA_ERRORS = {
-  NotAllowedError: 'Camera permission was denied, so smile and head-movement feedback is off.',
-  NotFoundError: 'No camera was found, so smile and head-movement feedback is off.',
-  NotReadableError: 'The camera is in use by another app, so smile and head-movement feedback is off.',
+  NotAllowedError: 'Camera permission was denied, so camera feedback (smiles, nods, movement, gestures) is off.',
+  NotFoundError: 'No camera was found, so camera feedback (smiles, nods, movement, gestures) is off.',
+  NotReadableError: 'The camera is in use by another app, so camera feedback (smiles, nods, movement, gestures) is off.',
 };
 const MIC_ERRORS = {
   NotAllowedError: 'Microphone permission was denied, so pace, pause, and pitch feedback is off.',
@@ -42,7 +44,7 @@ export class DeliveryTracker {
   reset() {
     this.stop();
     this.t0 = null;
-    this.faceFrames = []; // { t, face, phase: 'answer' | 'listen' }
+    this.faceFrames = []; // { t, face, body, phase: 'answer' | 'listen' }
     this.smileBuckets = new Map(); // whole second → { sum, n }
     this.marks = []; // { key, t } first time each question was answered
     this.segment = null;
@@ -85,7 +87,7 @@ export class DeliveryTracker {
         video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } },
       });
     } catch (e) {
-      state.errors.push(CAMERA_ERRORS[e.name] ?? `Camera unavailable (${e.message}), so smile and head-movement feedback is off.`);
+      state.errors.push(CAMERA_ERRORS[e.name] ?? `Camera unavailable (${e.message}), so camera feedback (smiles, nods, movement, gestures) is off.`);
     }
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({
@@ -161,7 +163,7 @@ export class DeliveryTracker {
       const worker = new Worker(new URL('./delivery-worker.js', import.meta.url));
       this.worker = worker;
       let loading = true;
-      const timeout = setTimeout(() => reject(new Error('Face tracking took too long to load, so smile and head-movement feedback is off.')), 45000);
+      const timeout = setTimeout(() => reject(new Error('Camera tracking took too long to load, so camera feedback (smiles, nods, movement, gestures) is off.')), 45000);
       worker.onmessage = ({ data }) => {
         if (worker !== this.worker) return;
         if (data.type === 'ready') {
@@ -174,14 +176,14 @@ export class DeliveryTracker {
           else this._stopFace();
         } else if (data.type === 'sample') {
           if (this.flight?.timestamp === data.timestamp) this._clearFlight();
-          if (epoch === this.epoch) this._addFace(data.sample, data.timestamp);
+          if (epoch === this.epoch) this._addFace(data.sample, data.body, data.timestamp);
         }
       };
       worker.onerror = (event) => {
         if (worker !== this.worker) return;
         event.preventDefault();
         clearTimeout(timeout);
-        if (loading) reject(new Error('Face tracking failed to start, so smile and head-movement feedback is off.'));
+        if (loading) reject(new Error('Camera tracking failed to start, so camera feedback (smiles, nods, movement, gestures) is off.'));
         else this._stopFace();
       };
       worker.postMessage({ type: 'init' });
@@ -227,9 +229,9 @@ export class DeliveryTracker {
     this.flight = null;
   }
 
-  _addFace(sample, timestamp) {
+  _addFace(sample, body, timestamp) {
     const t = this.now(timestamp);
-    this.faceFrames.push({ t, face: sample ?? null, phase: this.segment ? 'answer' : 'listen' });
+    this.faceFrames.push({ t, face: sample ?? null, body: body ?? null, phase: this.segment ? 'answer' : 'listen' });
     if (Number.isFinite(sample?.smile)) {
       const sec = Math.floor(t);
       const b = this.smileBuckets.get(sec) ?? { sum: 0, n: 0 };
@@ -289,6 +291,7 @@ export class DeliveryTracker {
         ? summarizeAudio(seg.audio, { spokenText, typing: seg.typing, thinkAloud })
         : null,
       face: this.usedCamera && face.length ? summarizeFace(face, headBaseline(this.faceFrames)) : null,
+      body: this.usedCamera && face.length ? summarizeBody(face, bodyBaseline(this.faceFrames)) : null,
       fillers: countFillers(text),
       words: countWords(text),
     };

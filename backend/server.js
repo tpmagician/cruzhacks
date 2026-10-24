@@ -119,6 +119,7 @@ const DELIVERY_RANGES = {
   articulationWpm: [0, 500], pitchPhrases: [0, 5000], uptalk: [0, 5000], uptalkShare: [0, 1],
   loudPhrases: [0, 5000], trailOff: [0, 5000], trailShare: [0, 1],
   longestSilence: [0, 7200], silentStretches: [0, 1000], silentCoding: [0, 1000],
+  shiftShare: [0, 1], gestureShare: [0, 1],
 };
 const num = (v, [min, max]) => {
   if (v == null || v === '' || typeof v === 'boolean') return null;
