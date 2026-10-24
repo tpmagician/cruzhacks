@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {
   detectHeadGestures, detectPitch, findSpeech, summarizeAudio, summarizeFace, countFillers,
   countWords, combineDeliveries, describeDelivery, deliveryChips, measureFace, rmsDb, headBaseline,
-  summarizeBody, bodyBaseline,
+  summarizeBody, bodyBaseline, voiceTracks,
 } from '../frontend/js/delivery-metrics.js';
+import { renderReport } from '../frontend/js/report.js';
 
 const FPS = 15;
 const face = (x, y, extra = {}) => ({ smile: 10, x, y, eye: 60, yaw: 0, pitch: 0, ...extra });
@@ -260,4 +261,32 @@ test('combineDeliveries reports movement and gesture shares only with enough bod
   const short = combineDeliveries([{ ...base, body: brief }]);
   assert.equal(short.shiftShare, null);
   assert.equal(short.gestureShare, null);
+});
+
+test('voiceTracks gives per-second loudness and pitch relative to the session', () => {
+  const frames = [];
+  // Second 0: loud, 200 Hz. Second 1: 12 dB quieter, 400 Hz (an octave up). Second 2: silent.
+  for (let i = 0; i < 20; i++) frames.push({ t: i * 0.05, db: -20, f0: 200 });
+  for (let i = 0; i < 20; i++) frames.push({ t: 1 + i * 0.05, db: -32, f0: 400 });
+  for (let i = 0; i < 20; i++) frames.push({ t: 2 + i * 0.05, db: -100, f0: null });
+  // Answer gap, then one second with a single voiced frame (too few to plot pitch).
+  frames.push({ t: 10.1, db: -25, f0: 300 }, { t: 10.2, db: -25, f0: null });
+  const { loudness, pitch } = voiceTracks(frames);
+  assert.deepEqual(loudness, [{ t: 0, v: 0 }, { t: 1, v: -12 }, { t: 2, v: -40 }, { t: 10, v: -5 }]);
+  assert.deepEqual(pitch.map((p) => p.t), [0, 1]);
+  assert.equal(pitch[1].v - pitch[0].v, 12);
+  assert.deepEqual(voiceTracks([]), { loudness: [], pitch: [] });
+});
+
+test('the report draws a lane for each track with enough points', () => {
+  const track = (n, v) => Array.from({ length: n }, (_, t) => ({ t, v }));
+  const rec = { id: 'b1', round: 'behavioral', question: 'Tell me about a time…', turns: [{ speaker: 'interviewer', text: 'q' }, { speaker: 'candidate', text: 'a' }], deliveries: [] };
+  const el = { innerHTML: '' };
+  const session = { answeredRecords: () => [rec] };
+  renderReport(el, session, { ok: false }, { duration: 30, marks: [{ key: 'b1', t: 2 }], tracks: { smile: track(20, 40), loudness: track(10, -6), pitch: track(2, 1) } });
+  assert.match(el.innerHTML, /Smile, Loudness across the interview/);
+  assert.doesNotMatch(el.innerHTML, /tl-lane[^>]*>Pitch/);
+  assert.match(el.innerHTML, />B1</);
+  renderReport(el, session, { ok: false }, { duration: 30, marks: [], tracks: { smile: [], loudness: [], pitch: [] } });
+  assert.doesNotMatch(el.innerHTML, /class="timeline"/);
 });

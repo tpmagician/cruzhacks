@@ -306,6 +306,35 @@ export function findSpeech(frames, { silenceDb = -25, floorDb = -60, minSilence 
   return { threshold, maxDb, sounding, firstSound: sounding[0].start, lastSound: sounding.at(-1).end };
 }
 
+export const TRACK_FLOOR_DB = -60; // quieter seconds are drawn at the floor
+const TRACK_MIN_VOICED = 2; // voiced frames needed in a second to plot its pitch
+
+/**
+ * One point per second for the report's loudness and pitch lanes, from answer
+ * audio frames ({ t, db, f0 }). Loudness is mean dB relative to the loudest
+ * second (0 = loudest); pitch is the second's median in semitones relative to
+ * the session's median pitch, so different voices are comparable.
+ */
+export function voiceTracks(frames) {
+  const buckets = new Map();
+  for (const f of frames ?? []) {
+    const sec = Math.floor(f.t);
+    const b = buckets.get(sec) ?? { db: [], f0: [] };
+    b.db.push(Math.max(TRACK_FLOOR_DB, f.db));
+    if (Number.isFinite(f.f0)) b.f0.push(f.f0);
+    buckets.set(sec, b);
+  }
+  const secs = [...buckets.keys()].sort((a, b) => a - b);
+  const loud = secs.map((t) => ({ t, db: mean(buckets.get(t).db) }));
+  const top = loud.length ? Math.max(...loud.map((p) => p.db)) : 0;
+  const voiced = secs.filter((t) => buckets.get(t).f0.length >= TRACK_MIN_VOICED);
+  const ref = voiced.length ? median(voiced.flatMap((t) => buckets.get(t).f0)) : null;
+  return {
+    loudness: loud.map((p) => ({ t: p.t, v: round(Math.max(TRACK_FLOOR_DB, p.db - top), 1) })),
+    pitch: voiced.map((t) => ({ t, v: round(12 * Math.log2(median(buckets.get(t).f0) / ref), 1) })),
+  };
+}
+
 export const UPTALK_SEMITONES = 2.5; // phrase ending this much above the phrase's median pitch
 export const TRAIL_OFF_DB = 6; // phrase ending this much quieter than the rest of the phrase
 export const SILENT_STRETCH_S = 15; // think-aloud: silence this long while solving is flagged

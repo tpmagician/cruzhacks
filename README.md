@@ -64,8 +64,8 @@ lacked: understanding the content of your answers and tying delivery to it.
 
 Gemma also gets guidance to flag hedging language ("I just", "sort of", "I guess") from the transcript.
 
-The report adds a **Delivery** section (metrics, a smile timeline across the whole
-interview with markers per question, and Gemma's delivery coaching) and a short
+The report adds a **Delivery** section (metrics, smile, loudness, and pitch tracks
+on one time axis with markers per question, and Gemma's delivery coaching) and a short
 delivery note per question. These are approximate coaching signals, not validated
 measures of skill, emotion, or confidence. Pure measurement code lives in
 `frontend/js/delivery-metrics.js` (shared with the server and tested with

@@ -117,49 +117,75 @@ function questionDeliveryHtml(rec, q) {
       </div>`;
 }
 
-/** Smile intensity per second with markers where each question's answer began (MACH's summary view). */
-function smileTimeline(s) {
-  const pts = s?.timeline ?? [];
-  if (pts.length < 3) return '';
+// One lane per track, sharing the time axis (MACH's summary view). Values outside
+// a lane's range are drawn at its edge.
+const LANES = [
+  { key: 'smile', label: 'Smile', range: '0–100', min: 0, max: 100, guide: SMILE_THRESHOLD },
+  { key: 'loudness', label: 'Loudness', range: '−40–0 dB', min: -40, max: 0 },
+  { key: 'pitch', label: 'Pitch', range: '±12 st', min: -12, max: 12, guide: 0 },
+];
+
+/** Smile, loudness, and pitch per second, with markers where each answer began. */
+function deliveryTracks(s) {
+  const lanes = LANES.filter((l) => (s?.tracks?.[l.key]?.length ?? 0) >= 3);
+  if (!lanes.length) return '';
   const W = 600;
-  const H = 130;
-  const left = 30;
+  const left = 64;
   const right = 10;
   const top = 18;
+  const laneH = 64;
+  const gap = 14;
   const bottom = 20;
-  const dur = Math.max(s.duration ?? 0, pts.at(-1).t + 1, 1);
+  const H = top + lanes.length * laneH + (lanes.length - 1) * gap + bottom;
+  const last = Math.max(...lanes.map((l) => s.tracks[l.key].at(-1).t));
+  const dur = Math.max(s.duration ?? 0, last + 1, 1);
   const x = (t) => left + (t / dur) * (W - left - right);
-  const y = (v) => H - bottom - (v / 100) * (H - top - bottom);
-  const runs = [];
-  for (const p of pts) {
-    const run = runs.at(-1);
-    if (run && p.t - run.at(-1).t <= 2) run.push(p);
-    else runs.push([p]);
-  }
-  const lines = runs
-    .map((run) => (run.length === 1
-      ? `<circle class="tl-dot" cx="${x(run[0].t).toFixed(1)}" cy="${y(run[0].smile).toFixed(1)}" r="1.8" />`
-      : `<polyline class="tl-line" points="${run.map((p) => `${x(p.t).toFixed(1)},${y(p.smile).toFixed(1)}`).join(' ')}" />`))
-    .join('');
+  const laneSvg = (lane, i) => {
+    const y0 = top + i * (laneH + gap);
+    const y = (v) => {
+      const f = (Math.min(lane.max, Math.max(lane.min, v)) - lane.min) / (lane.max - lane.min);
+      return y0 + laneH - f * laneH;
+    };
+    const runs = [];
+    for (const p of s.tracks[lane.key]) {
+      const run = runs.at(-1);
+      if (run && p.t - run.at(-1).t <= 2) run.push(p);
+      else runs.push([p]);
+    }
+    const lines = runs
+      .map((run) => (run.length === 1
+        ? `<circle class="tl-dot" cx="${x(run[0].t).toFixed(1)}" cy="${y(run[0].v).toFixed(1)}" r="1.8" />`
+        : `<polyline class="tl-line" points="${run.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}" />`))
+      .join('');
+    return `
+        <line class="tl-grid" x1="${left}" x2="${W - right}" y1="${y0}" y2="${y0}" />
+        <line class="tl-grid" x1="${left}" x2="${W - right}" y1="${y0 + laneH}" y2="${y0 + laneH}" />
+        ${lane.guide != null ? `<line class="tl-threshold" x1="${left}" x2="${W - right}" y1="${y(lane.guide).toFixed(1)}" y2="${y(lane.guide).toFixed(1)}" />` : ''}
+        <text class="tl-lane" x="${left - 6}" y="${y0 + 12}" text-anchor="end">${lane.label}</text>
+        <text class="tl-axis" x="${left - 6}" y="${y0 + 25}" text-anchor="end">${lane.range}</text>
+        ${lines}`;
+  };
+  const bottomY = H - bottom;
   const marks = (s.marks ?? [])
-    .map((m) => `<line class="tl-mark" x1="${x(m.t).toFixed(1)}" x2="${x(m.t).toFixed(1)}" y1="${top - 4}" y2="${H - bottom}" /><text class="tl-label" x="${(x(m.t) + 3).toFixed(1)}" y="${top - 6}">${escapeHtml(m.key.toUpperCase())}</text>`)
+    .map((m) => `<line class="tl-mark" x1="${x(m.t).toFixed(1)}" x2="${x(m.t).toFixed(1)}" y1="${top - 4}" y2="${bottomY}" /><text class="tl-label" x="${(x(m.t) + 3).toFixed(1)}" y="${top - 6}">${escapeHtml(m.key.toUpperCase())}</text>`)
     .join('');
   const step = Math.max(1, Math.ceil(dur / 60 / 10));
   let ticks = '';
   for (let m = 0; m * 60 <= dur; m += step) {
     ticks += `<text class="tl-axis" x="${x(m * 60).toFixed(1)}" y="${H - 4}" text-anchor="middle">${m}m</text>`;
   }
+  const notes = {
+    smile: 'Smile is intensity across the whole interview, including while Jordan spoke; the dashed line is where it counts as smiling.',
+    loudness: 'Loudness is relative to your loudest second.',
+    pitch: 'Pitch is relative to your usual pitch, in semitones.',
+  };
+  const voice = lanes.some((l) => l.key !== 'smile') ? ' Loudness and pitch are measured only while you answered.' : '';
   return `
     <figure class="timeline">
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Smile intensity from 0 to 100 across the interview">
-        <line class="tl-grid" x1="${left}" x2="${W - right}" y1="${y(0)}" y2="${y(0)}" />
-        <line class="tl-grid" x1="${left}" x2="${W - right}" y1="${y(100)}" y2="${y(100)}" />
-        <line class="tl-threshold" x1="${left}" x2="${W - right}" y1="${y(SMILE_THRESHOLD)}" y2="${y(SMILE_THRESHOLD)}" />
-        <text class="tl-axis" x="${left - 4}" y="${y(100) + 4}" text-anchor="end">100</text>
-        <text class="tl-axis" x="${left - 4}" y="${y(0) + 4}" text-anchor="end">0</text>
-        ${marks}${lines}${ticks}
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${lanes.map((l) => l.label).join(', ')} across the interview">
+        ${lanes.map(laneSvg).join('')}${marks}${ticks}
       </svg>
-      <figcaption class="muted small">Smile intensity (0–100) across the whole interview, including while Jordan spoke. The dashed line is where it counts as smiling; labels mark when you began each answer.</figcaption>
+      <figcaption class="muted small">${lanes.map((l) => notes[l.key]).join(' ')}${voice} Labels mark when you began each answer. These are for exploring how you came across, not targets.</figcaption>
     </figure>`;
 }
 
@@ -169,7 +195,7 @@ function deliverySectionHtml(records, report, sessionDelivery) {
   if (sessionDelivery?.listeningNods != null && sessionDelivery.listeningSeconds >= 10) {
     chips.push({ label: 'Nods while listening', value: String(sessionDelivery.listeningNods) });
   }
-  const timeline = smileTimeline(sessionDelivery);
+  const timeline = deliveryTracks(sessionDelivery);
   if (!chips.length && !timeline) return '';
   const summary = report?.delivery?.summary;
   const tips = report?.delivery?.tips ?? [];

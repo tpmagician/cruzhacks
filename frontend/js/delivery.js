@@ -8,7 +8,7 @@
 // counts replace the dictated ones. Nothing is stored.
 import { api } from './api.js';
 import {
-  summarizeAudio, summarizeFace, headBaseline, summarizeBody, bodyBaseline, detectHeadGestures, countFillers, countWords,
+  summarizeAudio, summarizeFace, headBaseline, summarizeBody, bodyBaseline, voiceTracks, detectHeadGestures, countFillers, countWords,
   rmsDb, detectPitch,
 } from './delivery-metrics.js';
 
@@ -46,6 +46,7 @@ export class DeliveryTracker {
     this.t0 = null;
     this.faceFrames = []; // { t, face, body, phase: 'answer' | 'listen' }
     this.smileBuckets = new Map(); // whole second → { sum, n }
+    this.voiceFrames = []; // { t, db, f0 } from every answer, for the loudness and pitch tracks
     this.marks = []; // { key, t } first time each question was answered
     this.segment = null;
     this.usedCamera = false;
@@ -251,7 +252,9 @@ export class DeliveryTracker {
       const db = rmsDb(this.audioBuf);
       if (this.segment) {
         const f0 = db > PITCH_FLOOR_DB ? detectPitch(this.audioBuf, this.audioCtx.sampleRate) : null;
-        this.segment.audio.push({ t: this.now(), db, f0 });
+        const frame = { t: this.now(), db, f0 };
+        this.segment.audio.push(frame);
+        this.voiceFrames.push(frame);
       }
       this.lastDb = db;
       if (++ticks % 2 === 0) this.onTick({ db, face: this.worker ? Boolean(this.lastFace) : null });
@@ -339,7 +342,7 @@ export class DeliveryTracker {
     this.segment = null;
   }
 
-  /** Whole-interview data: smile timeline, question marks, and nodding while listening. */
+  /** Whole-interview data: smile, loudness, and pitch tracks, question marks, and nodding while listening. */
   sessionSummary() {
     if (this.t0 == null) return null;
     const listening = this.faceFrames.map((f) => (f.phase === 'listen' ? f : { t: f.t, face: null }));
@@ -349,14 +352,15 @@ export class DeliveryTracker {
       const dt = listening[i].t - listening[i - 1].t;
       if (listening[i].face && listening[i - 1].face && dt <= 0.3) listenSeconds += dt;
     }
-    const timeline = [...this.smileBuckets.entries()]
+    const smile = [...this.smileBuckets.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([t, b]) => ({ t, smile: Math.round(b.sum / b.n) }));
+      .map(([t, b]) => ({ t, v: Math.round(b.sum / b.n) }));
+    const lastT = Math.max(this.faceFrames.at(-1)?.t ?? 0, this.voiceFrames.at(-1)?.t ?? 0);
     return {
       camera: this.usedCamera,
       mic: this.usedMic,
-      duration: this.faceFrames.length ? Math.ceil(this.faceFrames.at(-1).t) : Math.ceil(this.now()),
-      timeline,
+      duration: lastT ? Math.ceil(lastT) : Math.ceil(this.now()),
+      tracks: { smile, ...voiceTracks(this.voiceFrames) },
       marks: [...this.marks],
       listeningSeconds: Math.round(listenSeconds),
       listeningNods: this.usedCamera ? g.nods.length : null,
