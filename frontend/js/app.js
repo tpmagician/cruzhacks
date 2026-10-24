@@ -129,6 +129,13 @@ function show(name) {
   window.scrollTo({ top: 0 });
 }
 
+// The interview header (progress + camera) is pinned; share its height with the CSS
+// so messages scrolled into view don't land underneath it.
+const interviewHead = document.querySelector('#interview-head');
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--head-h', `${interviewHead.offsetHeight}px`);
+}).observe(interviewHead);
+
 async function checkHealth() {
   try {
     const h = await api.health();
