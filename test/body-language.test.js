@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BodyLanguageAnalyzer, measureFrame } from '../frontend/js/body-language.js';
-import { renderBodyLanguageReport, formatDuration } from '../frontend/js/presentation.js';
 
 const neutral = () => ({
   head: { yaw: 0, pitch: 0 },
@@ -60,7 +59,7 @@ test('shift is relative to current shoulder width', () => {
   assert.equal(closer.report(10).metrics.shift.fraction, 0);
 });
 
-test('neutral presentation has a high forward fraction and no gesture activity', () => {
+test('a neutral pose has a high forward fraction and no gesture activity', () => {
   const analyzer = calibrated();
   feed(analyzer, 10);
   const report = analyzer.report(10);
@@ -163,13 +162,10 @@ test('face orientation comes from the transformation normal', () => {
   assert.equal(measureFrame({}, face, 640, 480).head, null);
 });
 
-test('report displays unavailable measurements honestly and uses active clock timestamps', () => {
-  const analyzer = calibrated();
-  feed(analyzer, 3);
-  const element = { innerHTML: '', hidden: true };
-  renderBodyLanguageReport(element, analyzer.report(3));
-  assert.match(element.innerHTML, /Not enough data/);
-  assert.match(element.innerHTML, /0:03 active practice/);
-  assert.equal(element.hidden, false);
-  assert.equal(formatDuration(125.8), '2:05');
+test('a supplied baseline skips calibration and leaves head direction to the caller', () => {
+  const analyzer = new BodyLanguageAnalyzer({ baseline: { yaw: null, pitch: null, x: 0.5 } });
+  feed(analyzer, 10, () => ({ head: null, shoulders: { x: 0.7, scale: 0.3 }, wrists: null }));
+  const report = analyzer.report(10);
+  assert.equal(report.metrics.shift.fraction, 1);
+  assert.equal(report.metrics.head.fraction, null);
 });

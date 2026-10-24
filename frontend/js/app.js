@@ -1,7 +1,6 @@
 import { InterviewSession, STAR_TIP } from './interview.js';
 import { api } from './api.js';
 import { renderReport, renderProblem, escapeHtml } from './report.js';
-import { PresentationPractice } from './presentation.js';
 import { Dictation, Speaker, voiceSupport } from './voice.js';
 import { DeliveryTracker } from './delivery.js';
 
@@ -61,9 +60,6 @@ let lastReport = null;
 let lastSessionDelivery = null;
 let timerHandle = null;
 let codeFor = null; // record id the code editor currently belongs to
-const presentation = new PresentationPractice();
-let practiceMode = 'interview';
-let interviewScreen = 'setup';
 
 // Voice and delivery state
 let handoff = 0; // bumping this cancels a pending "finish speaking, then listen" hand-off
@@ -95,31 +91,6 @@ const dictation = new Dictation({
     setVoiceStatus(message);
   },
 });
-
-function selectMode(mode) {
-  if (mode === practiceMode) return;
-  practiceMode = mode;
-  $('#mode-interview').setAttribute('aria-pressed', String(mode === 'interview'));
-  $('#mode-presentation').setAttribute('aria-pressed', String(mode === 'presentation'));
-  if (mode === 'presentation') {
-    stopTimer();
-    suspendMedia();
-    for (const screen of Object.values(els.screens)) screen.hidden = true;
-    $('#screen-presentation').hidden = false;
-  } else {
-    presentation.leave();
-    $('#screen-presentation').hidden = true;
-    show(interviewScreen);
-    if (interviewScreen === 'interview' && session && !session.done) {
-      startTimer();
-      if (session.setup.delivery) startTracker();
-      if (!busy) openFloor();
-    }
-  }
-  window.scrollTo({ top: 0 });
-}
-$('#mode-interview').addEventListener('click', () => selectMode('interview'));
-$('#mode-presentation').addEventListener('click', () => selectMode('presentation'));
 
 // Proactive hints: if the candidate goes quiet on a technical question, the interviewer checks in.
 const QUIET_BEFORE_HINT = { coding: 150, sql: 150, other: 90 }; // seconds
@@ -154,8 +125,6 @@ els.themeToggle.addEventListener('click', () => {
 // Screens
 
 function show(name) {
-  interviewScreen = name;
-  if (practiceMode !== 'interview') return;
   for (const [key, el] of Object.entries(els.screens)) el.hidden = key !== name;
   window.scrollTo({ top: 0 });
 }
@@ -247,7 +216,7 @@ async function startTracker() {
   const current = session;
   els.deliveryNotice.textContent = 'Starting camera and microphone…';
   const state = await tracker.start();
-  if (session !== current || !session?.setup.delivery || practiceMode !== 'interview') return;
+  if (session !== current || !session?.setup.delivery) return;
   els.selfviewWrap.hidden = !state.camera;
   els.micMeterWrap.hidden = !state.mic;
   const on = [state.camera && 'camera', state.mic && 'microphone'].filter(Boolean);
@@ -318,14 +287,6 @@ async function closeFloor() {
   tracker.cancelSegment();
   floorOpen = false;
   els.voiceInterim.textContent = '';
-}
-
-function suspendMedia() {
-  closeFloor();
-  dictation.stop();
-  tracker.stop();
-  els.selfviewWrap.hidden = true;
-  els.micMeterWrap.hidden = true;
 }
 
 /** Releases the camera and microphone and stops all speech. Collected measurements are kept. */
@@ -479,7 +440,7 @@ function markActivity() {
  */
 function checkQuiet() {
   if (!session?.setup.autoHints || busy || sending || speaking || !floorOpen || session.done
-    || !els.error.hidden || !session.canHint() || practiceMode !== 'interview') {
+    || !els.error.hidden || !session.canHint()) {
     markActivity();
     return;
   }

@@ -9,12 +9,16 @@ A realistic, continuous mock job interview with a behavioral round and a technic
    ```bash
    npm install
    ```
-3. **Add your key.** Copy the example env file and paste your key into it:
+3. **Download the camera models** (for delivery feedback):
+   ```bash
+   npm run setup:models
+   ```
+4. **Add your key.** Copy the example env file and paste your key into it:
    ```bash
    cp .env.example .env
    # then edit .env:  GEMINI_API_KEY=your_real_key
    ```
-4. **Start the app:**
+5. **Start the app:**
    ```bash
    npm start
    ```
@@ -55,6 +59,8 @@ lacked: understanding the content of your answers and tying delivery to it.
 | Rising endings (uptalk) | Last 0.4 s of a phrase (≥1 s long) is 2.5+ semitones above the rest of the phrase; octave jumps ignored | Speeko-style |
 | Trailing off | Last 0.5 s of a phrase is 6+ dB quieter than the rest | Speeko-style |
 | Think-aloud (coding questions, voice on) | Silences of 15 s or more while solving, split by whether you were typing code | Added (SWE-specific) |
+| Side-to-side movement | Shoulder center more than 0.3 current shoulder widths from your usual (median) position, smoothed over ~250 ms | Added (MediaPipe Pose Lite) |
+| Gesturing | Share of the time both hands are visible with wrist speed over 0.35 shoulder widths per second | Added (MediaPipe Pose Lite) |
 
 Gemma also gets guidance to flag hedging language ("I just", "sort of", "I guess") from the transcript.
 
@@ -64,15 +70,13 @@ delivery note per question. These are approximate coaching signals, not validate
 measures of skill, emotion, or confidence. Pure measurement code lives in
 `frontend/js/delivery-metrics.js` (shared with the server and tested with
 synthetic signals in `test/delivery-metrics.test.js`); `delivery.js` runs the
-camera/microphone capture, `delivery-worker.js` runs face tracking, and
+camera/microphone capture, `delivery-worker.js` runs face and pose tracking, and
 `voice.js` handles speech. Face tracking needs `npm run setup:models`.
 
-## Presentation practice
+### Camera tracking
 
-The **Presentation practice** tab provides a separate webcam rehearsal mode with
-MediaPipe Pose Lite and Face Landmarker. It works without a Gemini API key.
-
-Download the two pinned model bundles once after installing dependencies:
+Download the two pinned MediaPipe model bundles (Face Landmarker and Pose Lite)
+once after installing dependencies:
 
 ```bash
 npm run setup:models
@@ -82,45 +86,32 @@ The setup script downloads version 1 float16 bundles from Google's official
 MediaPipe model storage and verifies their SHA-256 checksums. Models are stored
 in `frontend/models/` and ignored by Git; run the command on each new checkout or
 deployment. The MediaPipe JavaScript and WASM runtime is served from the pinned
-`@mediapipe/tasks-vision` dependency. No CDN is needed during practice.
+`@mediapipe/tasks-vision` dependency, so no CDN is needed.
 
-1. Run `npm start`, open the app, and choose **Presentation practice**.
-2. Enable your camera. Use localhost or HTTPS, preferably in current Chrome or
-   Edge with Web Workers, OffscreenCanvas, and ImageBitmap support.
-3. Put the camera at eye level on a stable surface. Keep your face, shoulders,
-   and hands visible. Face forward in a comfortable position and choose
-   **Calibrate & start**. Calibration requires 3 consecutive seconds of usable,
-   steady face tracking (shoulders are used if visible); it times out after 30 seconds so you can retry.
-4. Rehearse out loud. Use **Pause** / **Resume** for breaks and **Finish & view
-   report** when done. Hiding the tab automatically pauses active practice.
+Use localhost or HTTPS in current Chrome or Edge. Put the camera at eye level with
+your head and shoulders in view; include your hands for gesture feedback. There is
+no calibration step: head direction and side-to-side movement are measured against
+your median position over the interview.
 
-The report shows head direction, side-to-side movement, gesture activity,
-tracking coverage, and timestamped sustained head and shift events. Calibration and pauses
-are excluded. Switching back to interview mode finishes the practice and keeps
-its report until the next practice begins. Finishing, leaving presentation mode,
-or navigating away releases the camera and worker.
+Frames are analyzed in a dedicated worker (`delivery-worker.js`), up to 15 frames
+per second at 640 pixels wide with one frame in flight. The face model runs on
+every frame and the pose model on every other frame, so nod detection keeps its
+frame rate. Only derived measurements leave the worker; video is never recorded,
+uploaded, or stored. The preview is mirrored; analysis uses the original
+orientation.
 
-Video frames are analyzed locally in a dedicated worker, at up to 12 frames per
-second and 640 pixels wide, with one frame in flight. Only derived measurements
-return to the UI. No video/audio is recorded, uploaded, or persisted; reports
-live in memory until the page is closed or a new practice begins. The preview is
-mirrored for convenience; analysis uses the original camera orientation.
+Movement and gesture shares need at least 5 seconds of usable tracking; missing
+landmarks and processing gaps over 500 ms count as neither good nor bad.
+Low-confidence or cropped landmarks are excluded. These thresholds are initial
+coaching heuristics, not validated scores. Head direction does not measure eye
+contact, wrist movement does not measure gesture quality, and moving the camera
+or chair reads as side-to-side movement. The app does not infer emotions or
+confidence.
 
-Feedback uses transparent heuristics: a head turn over 25 degrees or pitch over
-20 degrees from calibration, a sideways shoulder shift over 0.3 shoulder widths,
-and wrist speed over 0.35 shoulder widths per second. Measurements are smoothed
-over roughly 250 ms. Head and shift events must last 2 seconds. Each percentage needs at least 5 seconds of usable
-observations; missing landmarks and processing gaps over 500 ms do not count as
-good or bad behavior. Low-confidence or cropped body landmarks are excluded.
-These thresholds are initial coaching heuristics to tune with representative
-rehearsals, not validated speaking scores. Head direction does not measure eye
-contact, and wrist movement does not measure gesture quality. The app does not infer emotions or confidence.
-
-Relevant files: `presentation.js` handles camera/session controls and report UI;
-`presentation-worker.js` runs both models; `body-language.js` contains geometry,
-calibration, coverage, smoothing, and temporal event rules. `npm test` exercises
-the analysis with synthetic landmark sequences, including pauses and missing
-observations.
+Relevant files: `delivery.js` owns the camera and microphone; `delivery-worker.js`
+runs both models; `delivery-metrics.js` holds the face and audio measurements;
+`body-language.js` holds the pose geometry, smoothing, and coverage rules.
+`npm test` exercises both with synthetic landmark and audio sequences.
 
 `npm run dev` restarts the server automatically when files change.
 

@@ -72,16 +72,6 @@ body {
 }
 
 main { max-width: 860px; margin: 0 auto; padding: 16px 16px 48px; }
-.mode-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
-.mode-switch [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-.camera-preview { position: relative; background: #10141a; border-radius: 10px; overflow: hidden; margin: 16px 0; aspect-ratio: 4 / 3; max-height: min(36vh, 320px); display: grid; place-items: center; }
-.camera-preview video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
-.camera-preview span { position: absolute; color: #cbd2dd; padding: 20px; text-align: center; }
-.metric-value { font-size: 1.65rem; font-weight: 650; margin: 8px 0; }
-.event-list { padding-left: 22px; }
-.event-list li { margin-bottom: 10px; }
-.event-list time { font-variant-numeric: tabular-nums; font-weight: 600; }
-#presentation-report:focus { outline: none; }
 h1 { font-size: 1.5rem; margin: 0 0 8px; }
 h2 { font-size: 1.15rem; margin: 24px 0 12px; }
 h3 { font-size: 1rem; margin: 0 0 8px; }

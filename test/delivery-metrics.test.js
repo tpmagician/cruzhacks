@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   detectHeadGestures, detectPitch, findSpeech, summarizeAudio, summarizeFace, countFillers,
   countWords, combineDeliveries, describeDelivery, deliveryChips, measureFace, rmsDb, headBaseline,
+  summarizeBody, bodyBaseline,
 } from '../frontend/js/delivery-metrics.js';
 
 const FPS = 15;
@@ -220,4 +221,43 @@ test('combineDeliveries merges answers and describeDelivery explains them', () =
   assert.equal(typed.wpm, null);
   assert.equal(typed.smileShare, null);
   assert.equal(typed.nods, null);
+});
+
+// Pose runs on every other camera frame; the rest carry body: null.
+function bodyTrack(seconds, bodyAt) {
+  const frames = [];
+  for (let i = 0; i <= seconds * FPS; i++) {
+    const t = i / FPS;
+    frames.push({ t, face: face(320, 240), body: i % 2 ? null : bodyAt(t) });
+  }
+  return frames;
+}
+
+test('side-to-side movement is measured against the usual shoulder position', () => {
+  const still = bodyTrack(10, () => ({ shoulders: { x: 0.5, scale: 0.3 }, wrists: null }));
+  assert.deepEqual(bodyBaseline(still), { x: 0.5 });
+  const swaying = bodyTrack(10, (t) => ({ shoulders: { x: t < 5 ? 0.5 : 0.65, scale: 0.3 }, wrists: null }));
+  const b = summarizeBody(swaying, { x: 0.5 });
+  assert.ok(b.shiftValid > 9);
+  assert.ok(Math.abs(b.shiftFlagged / b.shiftValid - 0.5) < 0.05);
+  assert.equal(b.gestureValid, 0);
+  // Not enough frames for a usual position yet: movement stays unmeasured.
+  assert.equal(bodyBaseline(still.slice(0, 10)), null);
+  assert.equal(summarizeBody(swaying, null).shiftValid, 0);
+  assert.equal(summarizeBody(still.map((f) => ({ ...f, body: null })), { x: 0.5 }), null);
+});
+
+test('combineDeliveries reports movement and gesture shares only with enough body tracking', () => {
+  const wrists = (t) => [{ x: -0.5 + (Math.floor(t * 2) % 2), y: 1 }, { x: 0.5, y: 1 }];
+  const body = summarizeBody(bodyTrack(10, (t) => ({ shoulders: { x: 0.5, scale: 0.3 }, wrists: wrists(t) })), { x: 0.5 });
+  const base = { audio: null, face: null, fillers: { count: 0, byWord: {} }, words: 0 };
+  const d = combineDeliveries([{ ...base, body }]);
+  assert.equal(d.shiftShare, 0);
+  assert.ok(d.gestureShare > 0.5);
+  assert.match(describeDelivery(d).join('\n'), /shifted sideways from their usual position 0%/);
+  assert.ok(deliveryChips(d).some((c) => c.label === 'Gesturing'));
+  const brief = summarizeBody(bodyTrack(3, () => ({ shoulders: { x: 0.5, scale: 0.3 }, wrists: null })), { x: 0.5 });
+  const short = combineDeliveries([{ ...base, body: brief }]);
+  assert.equal(short.shiftShare, null);
+  assert.equal(short.gestureShare, null);
 });

@@ -9,8 +9,10 @@
 // - Pitch: autocorrelation-based periodicity detection.
 // - Weak language: filler words as a share of spoken words.
 // Smile intensity comes from MediaPipe's mouthSmile blendshapes (0-100) instead of
-// MACH's SHORE classifier. All values are approximate coaching signals, not
+// MACH's SHORE classifier. Side-to-side movement and gestures reuse the body-pose
+// rules in body-language.js. All values are approximate coaching signals, not
 // validated measures of interview skill, emotion, or confidence.
+import { BodyLanguageAnalyzer } from './body-language.js';
 
 const DEG = 180 / Math.PI;
 
@@ -22,6 +24,7 @@ export const MAX_PITCH_HZ = 500;
 const REF_EYE_PX = 60; // MACH's 2 px rule is applied to a face rescaled to 60 px between outer eye corners
 const MAX_SWING_PX = 40; // larger swings are posture changes (e.g. looking down at notes), not nods
 const MIN_FRAMES = 20; // about 1.3 s of face tracking before a face statistic is reported
+const MIN_BODY_SECONDS = 5; // usable body tracking before a movement or gesture share is reported
 
 export const mean = (v) => v.reduce((s, n) => s + n, 0) / v.length;
 export function median(v) {
@@ -180,6 +183,25 @@ export function summarizeFace(frames, baseline = null) {
 }
 
 /** Median head direction over tracked frames, used as the "usual position". */
+/** Usual shoulder position over the session, the reference for side-to-side movement. */
+export function bodyBaseline(frames) {
+  const xs = (frames ?? []).map((f) => f.body?.shoulders?.x).filter(Number.isFinite);
+  return xs.length >= MIN_FRAMES ? { x: median(xs) } : null;
+}
+
+/**
+ * Seconds of usable and flagged body tracking for one answer. `frames` are
+ * { t, body } where body is null when pose tracking did not run on that frame.
+ */
+export function summarizeBody(frames, baseline = null) {
+  const bodies = (frames ?? []).filter((f) => f.body);
+  if (!bodies.length) return null;
+  const analyzer = new BodyLanguageAnalyzer({ baseline: { yaw: null, pitch: null, x: baseline?.x ?? null } });
+  for (const f of bodies) analyzer.add({ head: null, shoulders: f.body.shoulders, wrists: f.body.wrists }, f.t);
+  const { shift, gestures } = analyzer.stats;
+  return { shiftValid: shift.valid, shiftFlagged: shift.flagged, gestureValid: gestures.valid, gestureFlagged: gestures.flagged };
+}
+
 export function headBaseline(frames) {
   const heads = (frames ?? []).filter((f) => f.face && Number.isFinite(f.face.yaw) && Number.isFinite(f.face.pitch));
   if (heads.length < MIN_FRAMES) return null;
@@ -464,6 +486,9 @@ export function combineDeliveries(parts) {
   const uptalk = sum(audio.map((a) => a.uptalk ?? 0));
   const trailOff = sum(audio.map((a) => a.trailOff ?? 0));
   const silences = list.map((p) => p.audio?.silence).filter(Boolean);
+  const body = list.map((p) => p.body).filter(Boolean);
+  const shiftValid = sum(body.map((b) => b.shiftValid));
+  const gestureValid = sum(body.map((b) => b.gestureValid));
 
   return {
     answers: list.length,
@@ -496,6 +521,8 @@ export function combineDeliveries(parts) {
     nods: hasFace ? sum(face.map((f) => f.nods)) : null,
     shakes: hasFace ? sum(face.map((f) => f.shakes)) : null,
     awayShare: hasFace && headFrames >= MIN_FRAMES ? round(weighted(headParts, (f) => f.awayShare, (f) => f.headFrames), 2) : null,
+    shiftShare: shiftValid >= MIN_BODY_SECONDS ? round(sum(body.map((b) => b.shiftFlagged)) / shiftValid, 2) : null,
+    gestureShare: gestureValid >= MIN_BODY_SECONDS ? round(sum(body.map((b) => b.gestureFlagged)) / gestureValid, 2) : null,
   };
 }
 
@@ -532,6 +559,8 @@ export function describeDelivery(d) {
   if (d.smileShare != null) out.push(`smiling ${pct(d.smileShare)} of the time (mean smile intensity ${d.smileMean}/100)`);
   if (d.nods != null) out.push(`${plural(d.nods, 'head nod')} and ${plural(d.shakes, 'head shake')} while answering`);
   if (d.awayShare != null) out.push(`head turned away from their usual position ${pct(d.awayShare)} of the time`);
+  if (d.shiftShare != null) out.push(`shifted sideways from their usual position ${pct(d.shiftShare)} of the time (swaying, leaning, or moving in the seat)`);
+  if (d.gestureShare != null) out.push(`hands moving (gesturing) ${pct(d.gestureShare)} of the time both hands were visible`);
   if (d.faceCoverage != null && d.faceCoverage < 0.6) out.push(`face visible to the camera only ${pct(d.faceCoverage)} of the time`);
   return out;
 }
@@ -554,5 +583,7 @@ export function deliveryChips(d) {
   if (d.smileShare != null) chips.push({ label: 'Smiling', value: pct(d.smileShare) });
   if (d.nods != null) chips.push({ label: 'Nods / shakes', value: `${d.nods} / ${d.shakes}` });
   if (d.awayShare != null) chips.push({ label: 'Looking away', value: pct(d.awayShare) });
+  if (d.shiftShare != null) chips.push({ label: 'Side-to-side', value: pct(d.shiftShare) });
+  if (d.gestureShare != null) chips.push({ label: 'Gesturing', value: pct(d.gestureShare) });
   return chips;
 }

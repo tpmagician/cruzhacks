@@ -1,6 +1,8 @@
 // Pure geometry and timing rules, shared by the worker and deterministic tests.
 // Thresholds are coaching heuristics, not validated measures of speaking ability.
 const DEG = 180 / Math.PI;
+export const SHIFT_LIMIT = 0.3; // sideways shift, in current shoulder widths
+export const GESTURE_SPEED = 0.35; // wrist speed, in shoulder widths per second
 const angleDelta = (a, b) => ((a - b + 540) % 360) - 180;
 const mean = (values) => values.reduce((sum, n) => sum + n, 0) / values.length;
 const angleMean = (values) => Math.atan2(
@@ -48,9 +50,10 @@ export function measureFrame(pose, face, width, height) {
 }
 
 export class BodyLanguageAnalyzer {
-  constructor() {
+  /** `baseline` ({ yaw, pitch, x }) skips calibration, e.g. a usual position measured elsewhere. */
+  constructor({ baseline = null } = {}) {
     this.calibration = [];
-    this.baseline = null;
+    this.baseline = baseline;
     this.previous = null;
     this.smooth = {};
     this.stats = Object.fromEntries(['head', 'shift', 'gestures'].map((key) => [key, { valid: 0, flagged: 0 }]));
@@ -116,13 +119,13 @@ export class BodyLanguageAnalyzer {
     if (this.baseline.x != null && sample.shoulders && previous.shoulders) {
       // Current width keeps the measure stable when moving toward or away from the camera.
       const shift = smooth('shift', (sample.shoulders.x - this.baseline.x) / sample.shoulders.scale);
-      flags.shift = Math.abs(shift) > 0.3;
+      flags.shift = Math.abs(shift) > SHIFT_LIMIT;
     } else delete this.smooth.shift;
     if (sample.wrists && previous.wrists) {
       const speed = mean(sample.wrists.map((wrist, i) => Math.hypot(
         wrist.x - previous.wrists[i].x, wrist.y - previous.wrists[i].y,
       ))) / dt;
-      flags.gestures = smooth('speed', speed) > 0.35;
+      flags.gestures = smooth('speed', speed) > GESTURE_SPEED;
     } else delete this.smooth.speed;
 
     for (const [key, flagged] of Object.entries(flags)) {
