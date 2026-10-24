@@ -71,6 +71,10 @@
             <input type="checkbox" name="timer" checked /> Show a per-question timer
           </label>
 
+          <label class="check">
+            <input type="checkbox" name="autoHints" checked /> Interviewer offers hints when you seem stuck on a technical question <em class="muted">(3 hints per day, shared across interviews)</em>
+          </label>
+
           <button class="btn primary" type="submit">Start interview</button>
         </form>
       </div>
@@ -105,6 +109,18 @@
       </div>
 
       <form id="composer" class="composer">
+        <div class="media">
+          <div class="cam">
+            <video id="cam-video" autoplay muted playsinline></video>
+            <div id="cam-off" class="cam-off muted small">Camera off</div>
+            <span id="rec-dot" class="rec-dot" hidden aria-hidden="true"></span>
+          </div>
+          <div class="media-controls">
+            <button id="mic-btn" class="btn primary" type="button" aria-pressed="false">Start speaking</button>
+            <button id="cam-btn" class="btn ghost small" type="button">Turn camera on</button>
+            <div id="mic-status" class="muted small" aria-live="polite"></div>
+          </div>
+        </div>
         <div id="code-area" class="code-area" hidden>
           <label class="field">
             <span id="code-label">Code editor</span>
@@ -113,7 +129,7 @@
         </div>
         <label class="field">
           <span id="answer-label">Your answer</span>
-          <textarea id="answer" rows="4" placeholder="Type your answer… (Ctrl+Enter to send)"></textarea>
+          <textarea id="answer" rows="4" placeholder="Speak your answer, or type it… (Ctrl+Enter to send)"></textarea>
         </label>
         <div class="composer-actions">
           <button id="hint-btn" class="btn ghost" type="button" hidden>I'm stuck</button>
