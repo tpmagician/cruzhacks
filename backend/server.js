@@ -12,6 +12,7 @@ import {
   buildEvaluationPrompt,
 } from './prompts.js';
 import { parseInterviewerReply, tryParseJson, normalizeEvaluation } from './parse.js';
+import { FILLER_KEYS } from '../frontend/js/delivery-metrics.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(ROOT, '.env'), quiet: true });
@@ -22,6 +23,11 @@ const MAX_HISTORY = 200;
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+// Expose only the browser runtime, never the rest of node_modules.
+app.get('/vendor/mediapipe/vision_bundle.js', (_req, res) => {
+  res.sendFile(path.join(ROOT, 'node_modules/@mediapipe/tasks-vision/vision_bundle.js'));
+});
+app.use('/vendor/mediapipe/wasm', express.static(path.join(ROOT, 'node_modules/@mediapipe/tasks-vision/wasm')));
 app.use(express.static(path.join(ROOT, 'frontend')));
 
 // ---------------------------------------------------------------------------
@@ -99,6 +105,44 @@ function toContents(history) {
   return contents;
 }
 
+// Delivery measurements arrive as numbers computed in the browser; keep only known
+// fields within plausible ranges.
+const DELIVERY_RANGES = {
+  answers: [0, 50], spokenSeconds: [0, 7200], latency: [0, 600], wpm: [0, 400], pauseShare: [0, 1],
+  pauses: [0, 5000], longPauses: [0, 5000], pitchHz: [50, 600], pitchVarSt: [0, 24], loudVarDb: [0, 60],
+  words: [0, 100000], fillers: [0, 10000], fillerShare: [0, 1], faceCoverage: [0, 1], smileMean: [0, 100],
+  smileShare: [0, 1], nods: [0, 1000], shakes: [0, 1000], awayShare: [0, 1],
+  articulationWpm: [0, 500], pitchPhrases: [0, 5000], uptalk: [0, 5000], uptalkShare: [0, 1],
+  loudPhrases: [0, 5000], trailOff: [0, 5000], trailShare: [0, 1],
+  longestSilence: [0, 7200], silentStretches: [0, 1000], silentCoding: [0, 1000],
+};
+const num = (v, [min, max]) => {
+  if (v == null || v === '' || typeof v === 'boolean') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
+};
+
+function cleanDelivery(d) {
+  if (!d || typeof d !== 'object') return null;
+  const out = Object.fromEntries(Object.entries(DELIVERY_RANGES).map(([k, range]) => [k, num(d[k], range)]));
+  out.fillerWords = Object.fromEntries(
+    Object.entries(d.fillerWords && typeof d.fillerWords === 'object' ? d.fillerWords : {})
+      .filter(([k]) => FILLER_KEYS.includes(k))
+      .map(([k, v]) => [k, int(v, 0, 10000)]),
+  );
+  return out;
+}
+
+function cleanSessionDelivery(d) {
+  if (!d || typeof d !== 'object') return null;
+  return {
+    overall: cleanDelivery(d.overall),
+    listeningNods: num(d.listeningNods, [0, 1000]),
+    listeningShakes: num(d.listeningShakes, [0, 1000]),
+    listeningSeconds: num(d.listeningSeconds, [0, 24 * 3600]),
+  };
+}
+
 function cleanRecords(records) {
   if (!Array.isArray(records)) return [];
   return records.slice(0, 30).flatMap((r) => {
@@ -116,6 +160,7 @@ function cleanRecords(records) {
       code: clip(r.code, MAX_TEXT),
       hintsUsed: int(r.hintsUsed, 0, 50),
       seconds: int(r.seconds, 0, 24 * 3600),
+      delivery: cleanDelivery(r.delivery),
     }];
   });
 }
@@ -148,7 +193,7 @@ app.post('/api/evaluate', async (req, res) => {
     throw new AppError(400, 'NOTHING_TO_SCORE', 'There are no answered questions to score yet.');
   }
 
-  const prompt = buildEvaluationPrompt(setup, records);
+  const prompt = buildEvaluationPrompt(setup, records, cleanSessionDelivery(req.body?.delivery));
   const contents = [{ role: 'user', parts: [{ text: prompt }] }];
   const opts = { model: setup.model, systemInstruction: EVALUATOR_INSTRUCTION, thinking: 'high', temperature: 0.2 };
 

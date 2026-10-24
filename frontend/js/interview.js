@@ -2,6 +2,7 @@
 //   intro → behavioral → technical → candidate_questions → wrapup → report
 // The app (not the model) owns the structure: which round we're in, how many
 // main questions have been asked, and how many follow-ups each question has had.
+import { combineDeliveries } from './delivery-metrics.js';
 
 export const LENGTHS = { short: 3, standard: 5, long: 8 };
 export const MAX_FOLLOWUPS = 2;
@@ -255,6 +256,7 @@ export class InterviewSession {
       code: '',
       explanation: '',
       hintsUsed: 0,
+      deliveries: [], // one delivery measurement per spoken answer (see delivery.js)
       startedAt: Date.now(),
       seconds: 0,
       closed: false,
@@ -314,7 +316,7 @@ export class InterviewSession {
     };
   }
 
-  prepareAnswer({ text = '', code = '', explanation = '' }) {
+  prepareAnswer({ text = '', code = '', explanation = '', delivery = null }) {
     const coding = this.isCodingQuestion();
     let userText = text.trim();
     let includesCode = false;
@@ -347,6 +349,7 @@ export class InterviewSession {
         this._push(userText, res.text);
         const rec = this.record;
         rec.turns.push({ speaker: 'candidate', text: userText });
+        if (delivery) rec.deliveries.push(delivery);
         if (coding) {
           if (code.trim()) rec.code = code;
           if (explanation.trim()) rec.explanation = explanation.trim();
@@ -395,13 +398,24 @@ export class InterviewSession {
     return this.records.filter((r) => r.turns.some((t) => t.speaker === 'candidate'));
   }
 
-  evaluationPayload() {
+  /** @param {object|null} sessionDelivery DeliveryTracker.sessionSummary(), when delivery coaching was on */
+  evaluationPayload(sessionDelivery = null) {
     const { role, level, companyType, model } = this.setup;
+    const answered = this.answeredRecords();
+    const overall = combineDeliveries(answered.flatMap((r) => r.deliveries ?? []));
     return {
       setup: { role, level, companyType, model },
-      records: this.answeredRecords().map(({ id, round, type, topic, turns, code, hintsUsed, seconds }) => ({
-        id, round, type, topic, turns, code, hintsUsed, seconds,
+      records: answered.map(({ id, round, type, topic, turns, code, hintsUsed, seconds, deliveries }) => ({
+        id, round, type, topic, turns, code, hintsUsed, seconds, delivery: combineDeliveries(deliveries),
       })),
+      delivery: overall || sessionDelivery
+        ? {
+          overall,
+          listeningNods: sessionDelivery?.listeningNods ?? null,
+          listeningShakes: sessionDelivery?.listeningShakes ?? null,
+          listeningSeconds: sessionDelivery?.listeningSeconds ?? null,
+        }
+        : null,
     };
   }
 

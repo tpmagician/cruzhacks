@@ -83,7 +83,7 @@ function score(v) {
 }
 
 function str(v) {
-  return typeof v === 'string' && v.trim() ? v.trim() : null;
+  return typeof v === 'string' && v.trim() && !/^(null|n\/a|none)\.?$/i.test(v.trim()) ? v.trim() : null;
 }
 
 /** Coerces the model's evaluation into a fixed shape; missing values become null ("unable to score"). */
@@ -103,6 +103,7 @@ export function normalizeEvaluation(raw, records) {
       improve: str(q.improve),
       strongerAnswer: r.round === 'behavioral' ? str(q.strongerAnswer) : null,
       modelApproach: r.round === 'technical' ? str(q.modelApproach) : null,
+      delivery: r.delivery ? str(q.delivery) : null,
     };
   });
 
@@ -117,10 +118,16 @@ export function normalizeEvaluation(raw, records) {
     .filter(Boolean)
     .slice(0, 3);
 
+  const deliveryTips = (Array.isArray(raw?.delivery?.tips) ? raw.delivery.tips : [])
+    .map((x) => (typeof x === 'string' ? str(x) : str(x?.tip ?? x?.text)))
+    .filter(Boolean)
+    .slice(0, 3);
+
   return {
     overall: { score: score(raw?.overall?.score), summary: str(raw?.overall?.summary) },
     rounds,
     questions,
     topPractice,
+    delivery: { summary: str(raw?.delivery?.summary), tips: deliveryTips },
   };
 }
