@@ -32,12 +32,55 @@ call is needed. Each test restores its mocks and browser globals.
 | Delivery measurement | `test/delivery-metrics.test.js`, `test/body-language.test.js` | Existing synthetic face, pose, speech, pitch, pauses, fillers, and delivery aggregation checks |
 | Phase 1 tracks | `test/voice-tracks.test.js`, `test/report.test.js` | Per-second averaging, voice/mic baseline normalization, missing pitch, common time axis, question markers, gaps, sparse tracks, bounded plot values, failed-evaluation fallback, escaped content |
 | Browser voice adapters | `test/voice.test.js` | Unsupported APIs, final/interim dictation, stop-and-flush, permission denial, bounded restarts, speech cleanup, voice selection, completion/cancellation, stalled or failed playback |
+| Performance and background work | `test/delivery-metrics.test.js`, `test/delivery-tracker.test.js`, `test/parse.test.js` | Large-buffer speech analysis, bounded frame scans across many phrases, exact WAV cap and whole-answer fallback, transcription deadline cleanup, reset isolation, string-preserving JSON repair |
+| Progressive report lifecycle | `test/report-controller.test.js`, `test/report.test.js` | Immediate local mounting while transcription/AI stay unresolved, snapshot isolation, independent count/AI slots, preserved expanded answers/charts, duplicate entry, retry, stale success/error/finally guards, empty interviews |
+| Request deadlines | `test/request-deadlines.test.js`, `test/api.test.js` | Default-model hangs, total budget across fallback and JSON repair, backoff cancellation, body-read timeout, server disconnect propagation, audio fallback isolation, Express route handler contracts |
 
 Report tests inspect generated HTML/SVG and numerical coordinates. They do not
 launch a browser or validate visual layout. Prompt tests check the instructions
 sent to the model; they do not establish that live model replies follow them.
 Synthetic sensor tests verify algorithms and lifecycle behavior, not accuracy on
 real people or the validity of interview scores.
+
+## Offline performance checks
+
+```bash
+node scripts/benchmark-report.mjs
+```
+
+This measures synthetic 1-, 5-, and 30-minute audio summaries, voice tracks,
+report HTML generation, and a pitch-analysis frame. Each case uses two warmups
+and reports the median of seven runs. It does not measure DOM layout/paint or
+provider latency and has no pass/fail wall-clock threshold. Complexity regressions
+in the test suite instead count frame timestamp accesses.
+
+The [report performance plan](report-performance-plan.md) records the repository
+audit, before/after timings, implemented progressive report lifecycle, and
+remaining performance work.
+
+## Progressive report browser fixture
+
+```bash
+node scripts/report-smoke-server.mjs
+```
+
+Open `http://127.0.0.1:3001/__report_smoke`. This serves the real application with
+simulated microphone analysis and API adapters installed before app startup. It
+does not request devices or make model calls. Finish the three-question interview;
+AI and transcription remain pending until their fixture buttons are clicked.
+
+- Verify metrics/tracks/transcript are available while AI is loading.
+- Expand an answer, complete transcription, and verify counts change without
+  closing the answer or replacing the chart.
+- Fail AI, retry, then complete AI. Local results must stay visible throughout.
+- Leave an evaluation pending, start a new interview, then complete older AI;
+  the old response must not modify the new session.
+
+Browser smoke checks performed October 24, 2026 confirmed immediate local output,
+background count refinement with expanded-answer preservation, AI failure, and
+successful retry in the real app. Stale-response permutations and request
+deadlines are additionally covered offline. Fixture results do not establish live
+provider latency or actual microphone/camera accuracy.
 
 ## Phase 2 status and acceptance checks
 
@@ -89,7 +132,9 @@ These remain unexecuted browser acceptance checks, not automated test results.
 4. Test recording plus face/pose tracking for ten minutes on the demo laptop.
    Watch playback, responsiveness, memory, and device release on exit.
 
-Live provider availability, server route validation, model scoring calibration,
-and complete DOM/UI interactions are outside this offline suite. The scoring
+Live provider availability, full HTTP/socket/body-parser integration, model scoring
+calibration, and complete DOM/UI interactions are outside this offline suite.
+Server tests invoke the registered Express route handlers with simulated requests
+and responses. The scoring
 normalizer's known out-of-range coercion and positional-ID fallback are also not
 fixed by this test-only change.

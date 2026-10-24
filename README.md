@@ -159,6 +159,20 @@ Conversation history goes to the model as multi-turn `contents`, with `user` for
 
 `POST /api/evaluate` asks for strict JSON. The server strips code fences and pulls out the JSON object. If the JSON is invalid, it asks the model again once. If that also fails, it returns `{ ok: false, error: "unable_to_score" }`, and the report shows "unable to score" instead of crashing. Missing or out-of-range scores also show as "unable to score".
 
+The report shows local delivery metrics, tracks, and your answers immediately.
+AI scores and coaching load independently; filler transcription continues in the
+background and updates labeled counts without rescoring or resetting the report.
+Unavailable transcription keeps dictation estimates. Filler numbers are omitted
+from the AI snapshot so later counts cannot contradict its advice.
+
+API work has a 60-second server budget (including evaluation JSON repair), with
+30-second model attempts and at most one transient retry per model. The browser
+allows 65 seconds for a structured server response. New interviews and page exit
+cancel outstanding requests; late responses cannot update another session.
+AI failure keeps the local report available and offers **Try scoring again**.
+See the [report performance plan](docs/report-performance-plan.md) for the audit,
+implementation status, and remaining CPU/memory improvements.
+
 ### API
 
 | Route | Body | Response |

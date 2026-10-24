@@ -435,14 +435,22 @@ export class InterviewSession {
   }
 
   /** @param {object|null} sessionDelivery DeliveryTracker.sessionSummary(), when delivery coaching was on */
-  evaluationPayload(sessionDelivery = null) {
+  evaluationPayload(sessionDelivery = null, { includeFillers = true } = {}) {
     const { role, level, companyType, model } = this.setup;
     const answered = this.answeredRecords();
-    const overall = combineDeliveries(answered.flatMap((r) => r.deliveries ?? []));
+    const summarize = (parts) => {
+      const summary = combineDeliveries(parts);
+      if (summary && !includeFillers) {
+        for (const key of ['words', 'fillers', 'fillerShare']) summary[key] = null;
+        summary.fillerWords = {};
+      }
+      return summary;
+    };
+    const overall = summarize(answered.flatMap((r) => r.deliveries ?? []));
     return {
       setup: { role, level, companyType, model },
       records: answered.map(({ id, round, type, topic, turns, code, hintsUsed, seconds, deliveries }) => ({
-        id, round, type, topic, turns, code, hintsUsed, seconds, delivery: combineDeliveries(deliveries),
+        id, round, type, topic, turns, code, hintsUsed, seconds, delivery: summarize(deliveries),
       })),
       delivery: overall || sessionDelivery
         ? {

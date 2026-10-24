@@ -1,6 +1,7 @@
 import { InterviewSession, STAR_TIP } from './interview.js';
 import { api } from './api.js';
-import { renderReport, renderProblem, escapeHtml } from './report.js';
+import { renderReport, updateReportAI, updateReportDelivery, renderProblem, escapeHtml } from './report.js';
+import { ReportController } from './report-controller.js';
 import { Dictation, Speaker, voiceSupport } from './voice.js';
 import { DeliveryTracker } from './delivery.js';
 
@@ -69,6 +70,29 @@ let spokenText = ''; // words dictated into the current answer
 let speechBlocked = false; // dictation failed this interview; don't auto-restart it
 const speaker = new Speaker();
 const tracker = new DeliveryTracker({ video: els.selfview, onTick: showLevel });
+const reports = new ReportController({
+  tracker,
+  evaluate: (payload, options) => api.evaluate(payload, options),
+  view: {
+    mount: (current, delivery) => renderReport(els.report, current, { pending: true }, delivery),
+    delivery: (current, delivery) => updateReportDelivery(els.report, current, delivery),
+    loading: () => {
+      lastReport = null;
+      els.reportError.hidden = true;
+      els.rescoreBtn.hidden = true;
+      els.retryWeakBtn.hidden = true;
+      els.reportLoading.hidden = false;
+      updateReportAI(els.report, reports.active.session, { pending: true });
+    },
+    result: (current, result) => {
+      lastReport = result.ok ? result.report : null;
+      updateReportAI(els.report, current, result);
+      els.rescoreBtn.hidden = result.ok || result.error === 'NOTHING_TO_SCORE';
+      els.retryWeakBtn.hidden = !result.ok;
+    },
+    finished: () => { els.reportLoading.hidden = true; },
+  },
+});
 const dictation = new Dictation({
   onText: (text) => {
     if (!floorOpen) return;
@@ -184,6 +208,10 @@ els.setupForm.addEventListener('submit', (e) => {
 });
 
 function startInterview(setup) {
+  reports.clear();
+  turnController?.abort();
+  busy = false;
+  sending = false;
   finishMedia();
   tracker.reset();
   lastSessionDelivery = null;
@@ -328,7 +356,12 @@ els.micBtn.addEventListener('click', () => {
     dictation.start();
   }
 });
-window.addEventListener('pagehide', finishMedia);
+window.addEventListener('pagehide', () => {
+  reports.clear();
+  turnController?.abort();
+  tracker.cancelTranscriptions();
+  finishMedia();
+});
 
 // ---------------------------------------------------------------------------
 // Transcript
@@ -361,8 +394,13 @@ function appendMessage(role, text, code = '', problem = null) {
 // ---------------------------------------------------------------------------
 // Turns
 
+let turnController = null;
 async function runTurn(prepared) {
   if (busy) return;
+  const current = session;
+  const controller = new AbortController();
+  turnController = controller;
+  const active = () => session === current && turnController === controller;
   busy = true;
   floorOpen = false;
   hideError();
@@ -371,18 +409,22 @@ async function runTurn(prepared) {
   updateChrome();
   let reply = null;
   try {
-    const res = await api.interview(prepared.payload);
+    const res = await api.interview(prepared.payload, { signal: controller.signal });
+    if (!active()) return;
     prepared.commit(res);
     appendMessage('interviewer', res.text, '', res.problem);
     reply = res.text;
   } catch (err) {
+    if (!active() || controller.signal.aborted) return;
     showError(err.message, () => runTurn(prepared));
   } finally {
-    busy = false;
-    els.typing.hidden = true;
-    updateChrome();
+    if (active()) {
+      busy = false;
+      els.typing.hidden = true;
+      updateChrome();
+    }
   }
-  if (reply != null && session) handOff(reply);
+  if (reply != null && active()) handOff(reply);
 }
 
 els.composer.addEventListener('submit', (e) => {
@@ -618,7 +660,7 @@ els.code.addEventListener('keydown', (e) => {
 // Report
 
 els.reportBtn.addEventListener('click', goToReport);
-els.rescoreBtn.addEventListener('click', loadReport);
+els.rescoreBtn.addEventListener('click', () => reports.retry());
 
 // When the interviewer closes the interview, open the report on its own after a
 // short pause so the goodbye can be read.
@@ -634,35 +676,14 @@ function scheduleReport() {
 }
 
 function goToReport() {
+  if (!session) return;
+  if (reports.active?.session === session) { show('report'); return; }
   clearTimeout(reportTimer);
   stopTimer();
   finishMedia();
   lastSessionDelivery = session?.setup.delivery ? tracker.sessionSummary() : null;
   show('report');
-  loadReport();
-}
-
-async function loadReport() {
-  els.report.innerHTML = '';
-  els.reportError.hidden = true;
-  els.rescoreBtn.hidden = true;
-  els.retryWeakBtn.hidden = true;
-  els.reportLoading.hidden = false;
-  try {
-    await tracker.settle(); // let verbatim filler counts land first
-    const result = await api.evaluate(session.evaluationPayload(lastSessionDelivery));
-    lastReport = result.ok ? result.report : null;
-    renderReport(els.report, session, result, lastSessionDelivery);
-    els.rescoreBtn.hidden = result.ok;
-    els.retryWeakBtn.hidden = false;
-  } catch (err) {
-    els.reportError.hidden = false;
-    els.reportError.textContent = err.message;
-    els.rescoreBtn.hidden = err.code === 'NOTHING_TO_SCORE';
-    if (session.answeredRecords().length) renderReport(els.report, session, { ok: false }, lastSessionDelivery);
-  } finally {
-    els.reportLoading.hidden = true;
-  }
+  reports.open(session, lastSessionDelivery);
 }
 
 els.retryWeakBtn.addEventListener('click', () => {
@@ -671,6 +692,9 @@ els.retryWeakBtn.addEventListener('click', () => {
 });
 
 els.newBtn.addEventListener('click', () => {
+  reports.clear();
+  turnController?.abort();
+  tracker.cancelTranscriptions();
   stopTimer();
   finishMedia();
   session = null;

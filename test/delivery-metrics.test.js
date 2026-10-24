@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   detectHeadGestures, detectPitch, findSpeech, summarizeAudio, summarizeFace, countFillers,
   countWords, combineDeliveries, describeDelivery, deliveryChips, measureFace, rmsDb, headBaseline,
-  summarizeBody, bodyBaseline, voiceTracks,
+  summarizeBody, bodyBaseline, voiceTracks, phraseEndings,
 } from '../frontend/js/delivery-metrics.js';
 import { renderReport } from '../frontend/js/report.js';
 
@@ -289,4 +289,39 @@ test('the report draws a lane for each track with enough points', () => {
   assert.match(el.innerHTML, />B1</);
   renderReport(el, session, { ok: false }, { duration: 30, marks: [], tracks: { smile: [], loudness: [], pitch: [] } });
   assert.doesNotMatch(el.innerHTML, /class="timeline"/);
+});
+
+test('long recordings do not exceed the function argument limit in speech detection', () => {
+  const frames = Array.from({ length: 150000 }, (_, i) => ({ t: i / 20, db: -25, f0: 180 }));
+  const speech = findSpeech(frames);
+  assert.equal(speech.sounding.length, 1);
+  assert.equal(speech.firstSound, 0);
+  assert.ok(speech.lastSound > 7499);
+});
+
+test('phrase analysis scans frames once across many separated phrases', () => {
+  const intervals = Array.from({ length: 100 }, (_, i) => ({ start: i * 3, end: i * 3 + 2 }));
+  let reads = 0;
+  const frames = Array.from({ length: 6000 }, (_, i) => ({
+    get t() { reads++; return i / 20; },
+    db: -25, f0: 180,
+  }));
+  const endings = phraseEndings(frames, intervals);
+  assert.deepEqual(endings, { pitchPhrases: 100, uptalk: 0, loudPhrases: 100, trailOff: 0 });
+  // Bound work using timestamp reads, independent of machine speed.
+  assert.ok(reads < frames.length * 10, `${reads} frame timestamp reads`);
+});
+
+test('whole-answer audio summary does not search every phrase for every frame', () => {
+  let reads = 0;
+  const frames = Array.from({ length: 6000 }, (_, i) => ({
+    get t() { reads++; return i / 20; },
+    db: i % 60 < 40 ? -25 : -70,
+    f0: i % 60 < 40 ? 180 : null,
+  }));
+  const summary = summarizeAudio(frames);
+  assert.equal(summary.pitchPhrases, 100);
+  assert.equal(summary.pauses, 99);
+  assert.equal(summary.pitchVarSt, 0);
+  assert.ok(reads < frames.length * 30, `${reads} frame timestamp reads`);
 });

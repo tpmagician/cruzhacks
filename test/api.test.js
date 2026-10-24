@@ -39,3 +39,25 @@ test('non-JSON server failures fall back to an HTTP error', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError(); } }));
   await assert.rejects(api.evaluate({}), (err) => err.code === 'HTTP_502' && err.message === 'Request failed (502).');
 });
+
+test('request cancellation and deadline also bound response body consumption', async (t) => {
+  let expire;
+  t.mock.method(globalThis, 'setTimeout', (fn) => { expire = fn; return 1; });
+  t.mock.method(globalThis, 'clearTimeout', () => {});
+  let reading;
+  const entered = new Promise((resolve) => { reading = resolve; });
+  let signal;
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    signal = options.signal;
+    return { ok: true, json: () => { reading(); return new Promise(() => {}); } };
+  });
+  const request = api.evaluate({});
+  await entered;
+  expire();
+  await assert.rejects(request, (err) => err.code === 'DEADLINE_EXCEEDED');
+  assert.equal(signal.aborted, true);
+  const controller = new AbortController();
+  const cancelled = api.transcribe(new Blob(), { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(cancelled, (err) => err.code === 'CANCELLED');
+});

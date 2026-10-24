@@ -20,20 +20,22 @@ export function transcriberName() {
 }
 
 /** @returns {Promise<{ text: string, provider: string }>} */
-export async function transcribeVerbatim(audio, mimeType) {
-  if (deepgramKey()) return { text: await viaDeepgram(audio, mimeType), provider: 'deepgram' };
-  return { text: await viaGemini(audio, mimeType), provider: 'gemini' };
+export async function transcribeVerbatim(audio, mimeType, { signal } = {}) {
+  if (deepgramKey()) return { text: await viaDeepgram(audio, mimeType, signal), provider: 'deepgram' };
+  return { text: await viaGemini(audio, mimeType, signal), provider: 'gemini' };
 }
 
-async function viaDeepgram(audio, mimeType) {
+async function viaDeepgram(audio, mimeType, signal) {
   let res;
   try {
     res = await fetch(DEEPGRAM_URL, {
       method: 'POST',
       headers: { Authorization: `Token ${deepgramKey()}`, 'Content-Type': mimeType },
       body: audio,
+      signal,
     });
   } catch (err) {
+    if (signal?.aborted) throw signal.reason;
     throw new AppError(502, 'NETWORK', `Could not reach Deepgram: ${err.message}`);
   }
   if (res.status === 401 || res.status === 403) {
@@ -44,12 +46,14 @@ async function viaDeepgram(audio, mimeType) {
   return String(data?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? '').trim();
 }
 
-async function viaGemini(audio, mimeType) {
+async function viaGemini(audio, mimeType, signal) {
   try {
     const text = await generate({
       model: GEMINI_AUDIO_MODEL(),
       contents: [{ role: 'user', parts: [{ inlineData: { mimeType: mimeType.split(';')[0], data: audio.toString('base64') } }, { text: VERBATIM_PROMPT }] }],
       temperature: 0,
+      signal,
+      fallbackModel: null,
     });
     return /^\(?silence\)?\.?$/i.test(text.trim()) ? '' : text.trim();
   } catch (err) {

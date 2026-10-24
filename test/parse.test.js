@@ -77,3 +77,11 @@ test('missing evaluation fields remain unscored instead of crashing the report',
   assert.equal(result.questions[0].improve, null);
   assert.deepEqual(result.topPractice, []);
 });
+
+test('trailing-comma repair preserves punctuation and escaped quotes inside feedback', () => {
+  const summary = 'Keep ",}" and ", ]" in code, including \\ paths and "quoted" evidence.';
+  const raw = `{"overall":{"summary":${JSON.stringify(summary)},},"topPractice":["Use a,b,}",],}`;
+  const result = tryParseJson(raw);
+  assert.equal(result.overall.summary, summary);
+  assert.deepEqual(result.topPractice, ['Use a,b,}']);
+});

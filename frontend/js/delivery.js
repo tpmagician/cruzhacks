@@ -38,11 +38,14 @@ export class DeliveryTracker {
     this.video = video;
     this.onTick = onTick;
     this.epoch = 0;
+    this.listeners = new Set();
+    this.transcriptions = new Map();
     this.reset();
   }
 
   reset() {
     this.stop();
+    this.cancelTranscriptions();
     this.t0 = null;
     this.faceFrames = []; // { t, face, body, phase: 'answer' | 'listen' }
     this.smileBuckets = new Map(); // whole second → { sum, n }
@@ -53,6 +56,21 @@ export class DeliveryTracker {
     this.usedMic = false;
     this.pending = new Set(); // verbatim transcriptions in flight
   }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  cancelTranscriptions() {
+    for (const [controller, part] of this.transcriptions) {
+      part.transcriptionStatus = 'unavailable';
+      controller.abort();
+    }
+    this.transcriptions.clear();
+  }
+
+  _notify() { for (const listener of this.listeners) listener(); }
 
   get running() {
     return Boolean(this.videoStream || this.audioStream);
@@ -295,22 +313,34 @@ export class DeliveryTracker {
         : null,
       face: this.usedCamera && face.length ? summarizeFace(face, headBaseline(this.faceFrames)) : null,
       body: this.usedCamera && face.length ? summarizeBody(face, bodyBaseline(this.faceFrames)) : null,
-      fillers: countFillers(text),
-      words: countWords(text),
+      // Speech counts have the same scope before and after transcription, even
+      // when the user also typed corrections or additional text.
+      fillers: countFillers(spokenText || text),
+      words: countWords(spokenText || text),
+      fillerSource: spokenText ? 'dictation' : 'typed',
+      transcriptionStatus: spokenText ? 'unavailable' : 'not-needed',
     };
     // Only spoken answers are transcribed; typed text keeps its own counts.
-    if (countWords(spokenText) && seg.pcmLen >= PCM_RATE * MIN_AUDIO_SEC) this._transcribe(part, encodeWav(seg.pcm, seg.pcmLen));
+    // A capped recording is only a prefix of the answer. Its transcript cannot
+    // replace whole-answer word/filler counts; retain the dictated counts instead.
+    if (seg.key && !seg.pcmTruncated && countWords(spokenText) && seg.pcmLen >= PCM_RATE * MIN_AUDIO_SEC) this._transcribe(part, encodeWav(seg.pcm, seg.pcmLen));
     return part;
   }
 
   /** Resamples to 16 kHz 16-bit and appends to the answer's audio. */
   _pushPcm(seg, input, rate) {
-    if (seg.pcmLen >= PCM_RATE * MAX_ANSWER_SEC) return;
+    const remaining = PCM_RATE * MAX_ANSWER_SEC - seg.pcmLen;
+    if (remaining <= 0) {
+      if (input.length) seg.pcmTruncated = true;
+      return;
+    }
     const step = rate / PCM_RATE;
-    const out = new Int16Array(Math.ceil((input.length - seg.pcmPos) / step));
+    const samples = Math.ceil((input.length - seg.pcmPos) / step);
+    if (samples > remaining) seg.pcmTruncated = true;
+    const out = new Int16Array(Math.min(samples, remaining));
     let n = 0;
     let t = seg.pcmPos;
-    for (; t < input.length; t += step) {
+    for (; t < input.length && n < out.length; t += step) {
       const x = Math.max(-1, Math.min(1, input[Math.floor(t)]));
       out[n++] = x < 0 ? x * 0x8000 : x * 0x7fff;
     }
@@ -321,21 +351,37 @@ export class DeliveryTracker {
 
   /** Replaces the answer's dictated filler counts with verbatim ones when they arrive. */
   _transcribe(part, wav) {
-    const job = api.transcribe(wav)
+    const pending = this.pending;
+    const controller = new AbortController();
+    part.transcriptionStatus = 'pending';
+    this.transcriptions.set(controller, part);
+    const job = api.transcribe(wav, { signal: controller.signal })
       .then(({ text }) => {
-        if (!text) return;
+        if (this.pending !== pending || controller.signal.aborted) return;
+        if (!text?.trim()) { part.transcriptionStatus = 'unavailable'; return; }
         part.fillers = countFillers(text);
         part.words = countWords(text);
+        part.fillerSource = 'verbatim';
+        part.transcriptionStatus = 'ready';
       })
-      .catch((err) => console.warn('Verbatim transcription failed; using dictated filler counts.', err))
-      .finally(() => this.pending.delete(job));
-    this.pending.add(job);
+      .catch(() => { if (this.pending === pending) part.transcriptionStatus = 'unavailable'; })
+      .finally(() => {
+        pending.delete(job);
+        this.transcriptions.delete(controller);
+        if (this.pending === pending && !controller.signal.aborted) this._notify();
+      });
+    pending.add(job);
   }
 
   /** Waits (up to `ms`) for verbatim transcriptions still in flight. */
   async settle(ms = 60000) {
     if (!this.pending.size) return;
-    await Promise.race([Promise.allSettled([...this.pending]), new Promise((r) => setTimeout(r, ms))]);
+    let timer;
+    try {
+      await Promise.race([Promise.allSettled([...this.pending]), new Promise((r) => { timer = setTimeout(r, ms); })]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   cancelSegment() {

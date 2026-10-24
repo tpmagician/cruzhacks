@@ -105,16 +105,26 @@ function chipsHtml(chips) {
     : '';
 }
 
-function questionDeliveryHtml(rec, q) {
-  const d = combineDeliveries(rec.deliveries);
-  const chips = deliveryChips(d);
-  if (!chips.length) return '';
-  return `
-      <div class="delivery-block">
-        <h4>Delivery</h4>
-        ${chipsHtml(chips)}
-        ${q?.delivery ? `<p>${escapeHtml(q.delivery)}</p>` : ''}
-      </div>`;
+function localDeliveryHtml(parts, listening = null) {
+  const chips = deliveryChips(combineDeliveries(parts));
+  if (listening?.listeningNods != null && listening.listeningSeconds >= 10) {
+    chips.push({ label: 'Nods while listening', value: String(listening.listeningNods) });
+  }
+  const speech = (parts ?? []).filter((p) => p?.fillerSource && p.fillerSource !== 'typed');
+  const pending = speech.filter((p) => p.transcriptionStatus === 'pending').length;
+  const estimated = speech.filter((p) => p.fillerSource === 'dictation').length;
+  const typed = (parts ?? []).some((p) => p?.fillerSource === 'typed');
+  const note = pending
+    ? `Filler counts are estimates. Transcribing ${pending} answer${pending === 1 ? '' : 's'} in the background…`
+    : estimated ? 'Some filler counts use dictation estimates because verbatim audio was unavailable.'
+      : speech.length ? 'Filler counts use completed verbatim transcripts.' : '';
+  return `${chipsHtml(chips)}<p class="muted small" role="status">${note}${typed ? ' Filler totals include typed answers.' : ''}</p>`;
+}
+
+function questionDeliveryHtml(rec) {
+  if (!rec.deliveries?.length) return '';
+  return `<div class="delivery-block"><h4>Delivery</h4>
+    <div data-local-delivery="${escapeHtml(rec.id)}">${localDeliveryHtml(rec.deliveries)}</div></div>`;
 }
 
 // One lane per track, sharing the time axis (MACH's summary view). Values outside
@@ -189,106 +199,114 @@ function deliveryTracks(s) {
     </figure>`;
 }
 
-function deliverySectionHtml(records, report, sessionDelivery) {
-  const overall = combineDeliveries(records.flatMap((r) => r.deliveries ?? []));
-  const chips = deliveryChips(overall);
-  if (sessionDelivery?.listeningNods != null && sessionDelivery.listeningSeconds >= 10) {
-    chips.push({ label: 'Nods while listening', value: String(sessionDelivery.listeningNods) });
-  }
-  const timeline = deliveryTracks(sessionDelivery);
-  if (!chips.length && !timeline) return '';
+function deliveryCoachingHtml(report) {
   const summary = report?.delivery?.summary;
   const tips = report?.delivery?.tips ?? [];
-  return `
-    <section class="card delivery">
-      <h2>Delivery</h2>
-      <p class="muted small">Measured on your device from your camera and microphone, following the MACH interview-coaching method (Hoque et al., 2013). These are approximate signals, not a score.</p>
-      ${chipsHtml(chips)}
-      ${timeline}
-      ${summary ? `<p>${escapeHtml(summary)}</p>` : ''}
-      ${tips.length ? `<h4>Delivery practice</h4><ol>${tips.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ol>` : ''}
-    </section>`;
+  return `${summary ? `<p>${escapeHtml(summary)}</p>` : ''}
+    ${tips.length ? `<h4>Delivery practice</h4><ol>${tips.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ol>` : ''}`;
 }
 
-function questionHtml(rec, q) {
+function deliverySectionHtml(records, report, sessionDelivery) {
+  const parts = records.flatMap((r) => r.deliveries ?? []);
+  const timeline = deliveryTracks(sessionDelivery);
+  if (!parts.length && !timeline) return '';
+  return `<section class="card delivery">
+    <h2>Delivery</h2>
+    <p class="muted small">Measured on your device from your camera and microphone, following the MACH interview-coaching method (Hoque et al., 2013). These are approximate signals, not a score.</p>
+    <div data-local-delivery="overall">${localDeliveryHtml(parts, sessionDelivery)}</div>
+    ${timeline}
+    <div data-ai-delivery>${deliveryCoachingHtml(report)}</div>
+  </section>`;
+}
+
+function questionFeedbackHtml(rec, q, pending) {
+  if (pending) return '<p class="muted">AI feedback is loading…</p>';
   const scores = Object.entries(q?.scores ?? {})
-    .map(([k, v]) => `<li><span>${CRITERIA_LABELS[k] ?? k}</span>${scoreBadge(v)}</li>`)
-    .join('');
-  const better =
-    rec.round === 'behavioral'
-      ? `<h4>Stronger STAR version</h4><p class="pre">${text(q?.strongerAnswer, 'Not available.')}</p>`
-      : `<h4>Model approach</h4><p class="pre">${text(q?.modelApproach, 'Not available.')}</p>`;
+    .map(([k, v]) => `<li><span>${CRITERIA_LABELS[k] ?? k}</span>${scoreBadge(v)}</li>`).join('');
+  const better = rec.round === 'behavioral'
+    ? `<h4>Stronger STAR version</h4><p class="pre">${text(q?.strongerAnswer, 'Not available.')}</p>`
+    : `<h4>Model approach</h4><p class="pre">${text(q?.modelApproach, 'Not available.')}</p>`;
+  return `<ul class="scores">${scores}</ul>
+    <div class="rq-grid">
+      <div><h4>What went well</h4><p>${text(q?.wentWell)}</p></div>
+      <div><h4>What to improve</h4><p>${text(q?.improve)}</p></div>
+    </div>
+    ${q?.delivery ? `<p>${escapeHtml(q.delivery)}</p>` : ''}${better}`;
+}
+
+function questionHtml(rec, q, pending) {
   const meta = [
     `${ROUND_TITLE[rec.round]} · ${rec.id.toUpperCase()}`,
     rec.hintsUsed ? `${rec.hintsUsed} hint${rec.hintsUsed > 1 ? 's' : ''} used` : '',
     formatTime(rec.seconds),
   ].filter(Boolean).join(' · ');
-
-  return `
-    <article class="card rq">
-      <div class="rq-meta">${meta}</div>
-      ${rec.problem
-        ? `<h3 class="rq-question">${escapeHtml(rec.problem.title || 'Coding problem')}</h3>
-           <details><summary>Problem statement</summary><div class="problem">${renderProblem(rec.problem)}</div></details>`
-        : `<h3 class="rq-question">${escapeHtml(spoken(rec.question))}</h3>`}
-      <details>
-        <summary>Your answer${rec.turns.length > 2 ? ' and follow-ups' : ''}</summary>
-        <div class="rq-transcript">${transcriptHtml(rec)}</div>
-        ${rec.code ? `<pre class="code-block">${escapeHtml(rec.code)}</pre>` : ''}
-      </details>
-      <ul class="scores">${scores}</ul>
-      <div class="rq-grid">
-        <div><h4>What went well</h4><p>${text(q?.wentWell)}</p></div>
-        <div><h4>What to improve</h4><p>${text(q?.improve)}</p></div>
-      </div>
-      ${questionDeliveryHtml(rec, q)}
-      ${better}
-    </article>`;
+  return `<article class="card rq">
+    <div class="rq-meta">${meta}</div>
+    ${rec.problem
+      ? `<h3 class="rq-question">${escapeHtml(rec.problem.title || 'Coding problem')}</h3>
+         <details><summary>Problem statement</summary><div class="problem">${renderProblem(rec.problem)}</div></details>`
+      : `<h3 class="rq-question">${escapeHtml(spoken(rec.question))}</h3>`}
+    <details>
+      <summary>Your answer${rec.turns.length > 2 ? ' and follow-ups' : ''}</summary>
+      <div class="rq-transcript">${transcriptHtml(rec)}</div>
+      ${rec.code ? `<pre class="code-block">${escapeHtml(rec.code)}</pre>` : ''}
+    </details>
+    ${questionDeliveryHtml(rec)}
+    <div data-ai-question="${escapeHtml(rec.id)}" aria-busy="${pending}">${questionFeedbackHtml(rec, q, pending)}</div>
+  </article>`;
 }
 
-/**
- * @param {HTMLElement} el
- * @param {import('./interview.js').InterviewSession} session
- * @param {{ok: boolean, report?: object, message?: string}} result
- * @param {object|null} sessionDelivery DeliveryTracker.sessionSummary()
- */
-export function renderReport(el, session, result, sessionDelivery = null) {
-  const records = session.answeredRecords();
+function overviewHtml(records, result) {
+  if (result.pending) return '<section class="card"><h2>AI feedback</h2><p class="muted">Your scores and coaching will appear here when ready.</p></section>';
   const report = result.ok ? result.report : null;
-
-  const banner = result.ok
-    ? ''
+  const banner = result.ok ? ''
     : `<div class="card notice">We were unable to score this interview${result.message ? `: ${escapeHtml(result.message)}` : '.'} Your transcript is below. You can try scoring again.</div>`;
-
-  const rounds = [...new Set(records.map((r) => r.round))]
-    .map((r) => `
-      <div class="card round-score">
-        <div class="label">${ROUND_TITLE[r]}</div>
-        ${scoreBadge(report?.rounds?.[r]?.score)}
-        <p>${text(report?.rounds?.[r]?.summary, '')}</p>
-      </div>`)
-    .join('');
-
+  const rounds = [...new Set(records.map((r) => r.round))].map((r) => `<div class="card round-score">
+    <div class="label">${ROUND_TITLE[r]}</div>${scoreBadge(report?.rounds?.[r]?.score)}
+    <p>${text(report?.rounds?.[r]?.summary, '')}</p></div>`).join('');
   const practice = report?.topPractice?.length
     ? `<ol>${report.topPractice.map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ol>`
     : '<p class="muted">Unable to score.</p>';
+  return `${banner}<div class="summary-grid"><div class="card round-score overall">
+    <div class="label">Overall</div>${scoreBadge(report?.overall?.score)}
+    <p>${text(report?.overall?.summary, '')}</p></div>${rounds}</div>
+    <section class="card"><h2>Top 3 things to practice</h2>${practice}</section>`;
+}
 
-  el.innerHTML = `
-    ${banner}
-    <div class="summary-grid">
-      <div class="card round-score overall">
-        <div class="label">Overall</div>
-        ${scoreBadge(report?.overall?.score)}
-        <p>${text(report?.overall?.summary, '')}</p>
-      </div>
-      ${rounds}
-    </div>
-    <section class="card">
-      <h2>Top 3 things to practice</h2>
-      ${practice}
-    </section>
-    ${deliverySectionHtml(records, report, sessionDelivery)}
+/** Mount once. Updates below replace only their owned slots, preserving charts/details. */
+export function renderReport(el, session, result, sessionDelivery = null) {
+  const records = session.answeredRecords();
+  const report = result.ok ? result.report : null;
+  const byId = new Map((report?.questions ?? []).map((q) => [q.id, q]));
+  el.innerHTML = `${deliverySectionHtml(records, report, sessionDelivery)}
+    <div data-ai-overview aria-busy="${Boolean(result.pending)}">${overviewHtml(records, result)}</div>
     <h2>Question by question</h2>
-    ${records.map((rec) => questionHtml(rec, report?.questions?.find((q) => q.id === rec.id))).join('')}
-  `;
+    ${records.map((rec) => questionHtml(rec, byId.get(rec.id), Boolean(result.pending))).join('')}`;
+}
+
+export function updateReportAI(el, session, result) {
+  const records = session.answeredRecords();
+  const report = result.ok ? result.report : null;
+  const overview = el.querySelector('[data-ai-overview]');
+  overview.innerHTML = overviewHtml(records, result);
+  overview.setAttribute('aria-busy', String(Boolean(result.pending)));
+  const coaching = el.querySelector('[data-ai-delivery]');
+  if (coaching) coaching.innerHTML = deliveryCoachingHtml(report);
+  const byId = new Map((report?.questions ?? []).map((q) => [q.id, q]));
+  const recordById = new Map(records.map((r) => [r.id, r]));
+  for (const slot of el.querySelectorAll('[data-ai-question]')) {
+    const rec = recordById.get(slot.dataset.aiQuestion);
+    if (rec) slot.innerHTML = questionFeedbackHtml(rec, byId.get(rec.id), Boolean(result.pending));
+    slot.setAttribute('aria-busy', String(Boolean(result.pending)));
+  }
+}
+
+export function updateReportDelivery(el, session, sessionDelivery) {
+  const records = session.answeredRecords();
+  const byId = new Map(records.map((r) => [r.id, r.deliveries]));
+  for (const slot of el.querySelectorAll('[data-local-delivery]')) {
+    const overall = slot.dataset.localDelivery === 'overall';
+    const parts = overall ? records.flatMap((r) => r.deliveries ?? []) : byId.get(slot.dataset.localDelivery);
+    slot.innerHTML = localDeliveryHtml(parts, overall ? sessionDelivery : null);
+  }
 }

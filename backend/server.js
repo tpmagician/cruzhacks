@@ -13,7 +13,7 @@ import {
 } from './prompts.js';
 import { parseInterviewerReply, tryParseJson, normalizeEvaluation } from './parse.js';
 import { transcribeVerbatim, transcriberName } from './transcribe.js';
-import { FILLER_KEYS } from '../frontend/js/delivery-metrics.js';
+import { requestDeadline } from './request.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(ROOT, '.env'), quiet: true });
@@ -21,15 +21,6 @@ dotenv.config({ path: path.join(ROOT, '.env'), quiet: true });
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_TEXT = 20_000;
 const MAX_HISTORY = 200;
-
-const app = express();
-app.use(express.json({ limit: '2mb' }));
-// Expose only the browser runtime, never the rest of node_modules.
-app.get('/vendor/mediapipe/vision_bundle.js', (_req, res) => {
-  res.sendFile(path.join(ROOT, 'node_modules/@mediapipe/tasks-vision/vision_bundle.js'));
-});
-app.use('/vendor/mediapipe/wasm', express.static(path.join(ROOT, 'node_modules/@mediapipe/tasks-vision/wasm')));
-app.use(express.static(path.join(ROOT, 'frontend')));
 
 // ---------------------------------------------------------------------------
 // Input cleaning
@@ -130,11 +121,10 @@ const num = (v, [min, max]) => {
 function cleanDelivery(d) {
   if (!d || typeof d !== 'object') return null;
   const out = Object.fromEntries(Object.entries(DELIVERY_RANGES).map(([k, range]) => [k, num(d[k], range)]));
-  out.fillerWords = Object.fromEntries(
-    Object.entries(d.fillerWords && typeof d.fillerWords === 'object' ? d.fillerWords : {})
-      .filter(([k]) => FILLER_KEYS.includes(k))
-      .map(([k, v]) => [k, int(v, 0, 10000)]),
-  );
+  // Filler counts continue to change in the browser while this snapshot is scored.
+  // Keep AI coaching independent of that optional background transcription.
+  for (const key of ['words', 'fillers', 'fillerShare']) out[key] = null;
+  out.fillerWords = {};
   return out;
 }
 
@@ -170,88 +160,108 @@ function cleanRecords(records) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Routes
+export function createApp({ generateContent = generate, transcribe = transcribeVerbatim, requestTimeoutMs = 60000 } = {}) {
+  const app = express();
+  app.use(express.json({ limit: '2mb' }));
+  // Expose only the browser runtime, never the rest of node_modules.
+  app.get('/vendor/mediapipe/vision_bundle.js', (_req, res) => {
+    res.sendFile(path.join(ROOT, 'node_modules/@mediapipe/tasks-vision/vision_bundle.js'));
+  });
+  app.use('/vendor/mediapipe/wasm', express.static(path.join(ROOT, 'node_modules/@mediapipe/tasks-vision/wasm')));
+  app.use(express.static(path.join(ROOT, 'frontend')));
 
-app.get('/api/health', (_req, res) => {
-  const key = (process.env.GEMINI_API_KEY || '').trim();
-  res.json({ ok: true, hasKey: Boolean(key && key !== 'your_api_key_here'), models: MODELS, transcriber: transcriberName() });
-});
+  // ---------------------------------------------------------------------------
+  // Routes
 
-app.post('/api/interview', async (req, res) => {
-  const setup = cleanSetup(req.body?.setup);
-  const turn = cleanTurn(req.body?.turn);
-  const contents = toContents(req.body?.history);
-  const { systemInstruction, expectsAction, thinking } = buildInterviewerTurn(setup, turn);
+  app.get('/api/health', (_req, res) => {
+    const key = (process.env.GEMINI_API_KEY || '').trim();
+    res.json({ ok: true, hasKey: Boolean(key && key !== 'your_api_key_here'), models: MODELS, transcriber: transcriberName() });
+  });
 
-  const raw = await generate({ model: setup.model, systemInstruction, contents, thinking, temperature: 0.8 });
-  const parsed = parseInterviewerReply(raw, INTERVIEWER_NAME);
-  const { action, problem } = parsed;
-  const text = parsed.text || (problem ? "Here's the next problem. Take a moment to read it on your screen." : '');
-  if (!text) throw new AppError(502, 'EMPTY_RESPONSE', 'The interviewer returned an empty reply. Please retry.');
+  app.post('/api/interview', requestDeadline(async (req, res, signal) => {
+    const setup = cleanSetup(req.body?.setup);
+    const turn = cleanTurn(req.body?.turn);
+    const contents = toContents(req.body?.history);
+    const { systemInstruction, expectsAction, thinking } = buildInterviewerTurn(setup, turn);
 
-  res.json({ text, action: expectsAction ? action : null, problem, thinking });
-});
+    const raw = await generateContent({ model: setup.model, systemInstruction, contents, thinking, temperature: 0.8, signal });
+    signal.throwIfAborted();
+    const parsed = parseInterviewerReply(raw, INTERVIEWER_NAME);
+    const { action, problem } = parsed;
+    const text = parsed.text || (problem ? "Here's the next problem. Take a moment to read it on your screen." : '');
+    if (!text) throw new AppError(502, 'EMPTY_RESPONSE', 'The interviewer returned an empty reply. Please retry.');
 
-// Verbatim transcript of one answer's audio (WAV), used to count filler words.
-app.post('/api/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '20mb' }), async (req, res) => {
-  if (!Buffer.isBuffer(req.body) || req.body.length < 1000) {
-    throw new AppError(400, 'BAD_REQUEST', 'No audio received.');
-  }
-  const mimeType = clip(req.get('content-type'), 100) || 'audio/wav';
-  res.json(await transcribeVerbatim(req.body, mimeType));
-});
+    res.json({ text, action: expectsAction ? action : null, problem, thinking });
+  }, requestTimeoutMs));
 
-app.post('/api/evaluate', async (req, res) => {
-  const setup = cleanSetup(req.body?.setup);
-  const records = cleanRecords(req.body?.records);
-  if (!records.length) {
-    throw new AppError(400, 'NOTHING_TO_SCORE', 'There are no answered questions to score yet.');
-  }
+  // Verbatim transcript of one answer's audio (WAV), used to count filler words.
+  app.post('/api/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '20mb' }), requestDeadline(async (req, res, signal) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length < 1000) {
+      throw new AppError(400, 'BAD_REQUEST', 'No audio received.');
+    }
+    const mimeType = clip(req.get('content-type'), 100) || 'audio/wav';
+    const result = await transcribe(req.body, mimeType, { signal });
+    signal.throwIfAborted();
+    res.json(result);
+  }, requestTimeoutMs));
 
-  const prompt = buildEvaluationPrompt(setup, records, cleanSessionDelivery(req.body?.delivery));
-  const contents = [{ role: 'user', parts: [{ text: prompt }] }];
-  const opts = { model: setup.model, systemInstruction: EVALUATOR_INSTRUCTION, thinking: 'high', temperature: 0.2 };
+  app.post('/api/evaluate', requestDeadline(async (req, res, signal) => {
+    const setup = cleanSetup(req.body?.setup);
+    const records = cleanRecords(req.body?.records);
+    if (!records.length) {
+      throw new AppError(400, 'NOTHING_TO_SCORE', 'There are no answered questions to score yet.');
+    }
 
-  let out = await generate({ ...opts, contents });
-  let parsed = tryParseJson(out);
+    const prompt = buildEvaluationPrompt(setup, records, cleanSessionDelivery(req.body?.delivery));
+    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+    const opts = { model: setup.model, systemInstruction: EVALUATOR_INSTRUCTION, thinking: 'high', temperature: 0.2, signal };
 
-  if (!parsed) {
-    out = await generate({
-      ...opts,
-      contents: [
-        ...contents,
-        { role: 'model', parts: [{ text: out.slice(0, MAX_TEXT) }] },
-        { role: 'user', parts: [{ text: JSON_RETRY_MESSAGE }] },
-      ],
-    });
-    parsed = tryParseJson(out);
-  }
+    let out = await generateContent({ ...opts, contents });
+    signal.throwIfAborted();
+    let parsed = tryParseJson(out);
 
-  if (!parsed) {
-    return res.json({ ok: false, error: 'unable_to_score', message: 'The model did not return a valid evaluation after a retry.' });
-  }
-  res.json({ ok: true, report: normalizeEvaluation(parsed, records) });
-});
+    if (!parsed) {
+      out = await generateContent({
+        ...opts,
+        contents: [
+          ...contents,
+          { role: 'model', parts: [{ text: out.slice(0, MAX_TEXT) }] },
+          { role: 'user', parts: [{ text: JSON_RETRY_MESSAGE }] },
+        ],
+      });
+      signal.throwIfAborted();
+      parsed = tryParseJson(out);
+    }
 
-app.use('/api', (_req, _res, next) => next(new AppError(404, 'NOT_FOUND', 'Unknown API route.')));
+    if (!parsed) {
+      return res.json({ ok: false, error: 'unable_to_score', message: 'The model did not return a valid evaluation after a retry.' });
+    }
+    res.json({ ok: true, report: normalizeEvaluation(parsed, records) });
+  }, requestTimeoutMs));
 
-// eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
-  if (err instanceof AppError) {
-    return res.status(err.status).json({ error: { code: err.code, message: err.message } });
-  }
-  if (err?.type === 'entity.too.large') {
-    return res.status(413).json({ error: { code: 'TOO_LARGE', message: 'The request was too large.' } });
-  }
-  console.error(err);
-  res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Unexpected server error. Check the server logs.' } });
-});
+  app.use('/api', (_req, _res, next) => next(new AppError(404, 'NOT_FOUND', 'Unknown API route.')));
 
-app.listen(PORT, () => {
-  const key = (process.env.GEMINI_API_KEY || '').trim();
-  console.log(`Interview Prep Studio running at http://localhost:${PORT}`);
-  if (!key || key === 'your_api_key_here') {
-    console.warn('Warning: GEMINI_API_KEY is not set. Copy .env.example to .env and add your key.');
-  }
-});
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, _req, res, _next) => {
+    if (err instanceof AppError) {
+      return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    }
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: { code: 'TOO_LARGE', message: 'The request was too large.' } });
+    }
+    console.error(err);
+    res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Unexpected server error. Check the server logs.' } });
+  });
+
+  return app;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  createApp().listen(PORT, () => {
+    const key = (process.env.GEMINI_API_KEY || '').trim();
+    console.log(`Interview Prep Studio running at http://localhost:${PORT}`);
+    if (!key || key === 'your_api_key_here') {
+      console.warn('Warning: GEMINI_API_KEY is not set. Copy .env.example to .env and add your key.');
+    }
+  });
+}

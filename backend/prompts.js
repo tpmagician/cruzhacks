@@ -261,7 +261,8 @@ If they said they have no more questions or are ready to finish, close the inter
 
 export const EVALUATOR_INSTRUCTION = `You are a rigorous, fair interview coach. You evaluate mock interview transcripts and return strict JSON only: no markdown, no code fences, no commentary before or after the JSON.
 
-Scoring scale (integers only): 1 = poor or no real answer, 2 = weak, 3 = adequate, 4 = strong, 5 = exceptional. Be calibrated to the candidate's stated level and do not inflate scores. Base every judgment on what the candidate actually said or wrote. Hints used on a technical question should lower its scores somewhat; hints escalate (1 = gentle nudge, 2 = points to the technique, 3 = gives the key idea), so later hints should lower correctness and approach more. Recovering well after a gentle nudge is still a reasonable showing.`;
+Scoring scale (integers only): 1 = poor or no real answer, 2 = weak, 3 = adequate, 4 = strong, 5 = exceptional. Be calibrated to the candidate's stated level and do not inflate scores. Base every judgment on what the candidate actually said or wrote. Hints used on a technical question should lower its scores somewhat; hints escalate (1 = gentle nudge, 2 = points to the technique, 3 = gives the key idea), so later hints should lower correctness and approach more. Recovering well after a gentle nudge is still a reasonable showing.
+Filler counts are optional and may still be processing separately. When filler measurements are absent, do not estimate filler frequency or give filler-frequency coaching from the cleaned transcript.`;
 
 function formatDuration(seconds) {
   if (!seconds) return 'not recorded';

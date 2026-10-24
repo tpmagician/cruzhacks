@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport } from '../frontend/js/report.js';
+import { renderReport, updateReportAI, updateReportDelivery } from '../frontend/js/report.js';
 import { voiceTracks } from '../frontend/js/delivery-metrics.js';
 
 const record = { id: 'b1', round: 'behavioral', question: 'Tell me about a project.', turns: [{ speaker: 'interviewer', text: 'Question' }, { speaker: 'candidate', text: 'I shipped it.' }], deliveries: [] };
@@ -68,4 +68,51 @@ test('model feedback, candidate text, code, and marker labels are escaped', () =
   }, [{ ...record, question: attack, code: attack, turns: [record.turns[0], { speaker: 'candidate', text: attack }] }]);
   assert.doesNotMatch(html, /<img/i);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
+test('pending AI renders local delivery and transcript without false failure scores', () => {
+  const part = { words: 12, fillers: { count: 1 }, fillerSource: 'dictation', transcriptionStatus: 'pending' };
+  const html = render({ tracks: { smile: track([0, 1, 2], 40) } }, { pending: true }, [{ ...record, deliveries: [part] }]);
+  assert.match(html, /class="timeline"/);
+  assert.match(html, /I shipped it/);
+  assert.match(html, /Transcribing 1 answer/);
+  assert.match(html, /aria-busy="true"/);
+  assert.doesNotMatch(html, /unable to score|Unable to score/);
+});
+
+test('AI and transcription updates write only owned slots, preserving charts and expanded answers', () => {
+  const slot = (dataset = {}) => ({ dataset, innerHTML: '', attributes: {}, setAttribute(k, v) { this.attributes[k] = v; } });
+  const overview = slot(), coaching = slot(), question = slot({ aiQuestion: 'b1' });
+  const overall = slot({ localDelivery: 'overall' }), local = slot({ localDelivery: 'b1' });
+  const untouched = { chart: {}, details: { open: true } };
+  const el = {
+    set innerHTML(_) { assert.fail('must not replace the mounted report'); },
+    querySelector: (selector) => ({ '[data-ai-overview]': overview, '[data-ai-delivery]': coaching })[selector],
+    querySelectorAll: (selector) => ({ '[data-ai-question]': [question], '[data-local-delivery]': [overall, local] })[selector],
+    ...untouched,
+  };
+  const part = { words: 12, fillers: { count: 1 }, fillerSource: 'dictation', transcriptionStatus: 'pending' };
+  const session = { answeredRecords: () => [{ ...record, deliveries: [part] }] };
+  updateReportAI(el, session, { ok: true, report: { overall: { score: 4 }, questions: [{ id: 'b1', improve: 'Quantify results.' }] } });
+  assert.match(overview.innerHTML, /4<small>/);
+  assert.match(question.innerHTML, /Quantify results/);
+  assert.equal(question.attributes['aria-busy'], 'false');
+  const ai = question.innerHTML;
+  part.fillers.count = 2; part.fillerSource = 'verbatim'; part.transcriptionStatus = 'ready';
+  updateReportDelivery(el, session, null);
+  assert.match(local.innerHTML, /2 \(16.7%\)/);
+  assert.match(overall.innerHTML, /completed verbatim transcripts/);
+  assert.equal(question.innerHTML, ai);
+  assert.equal(el.chart, untouched.chart);
+  assert.equal(el.details.open, true);
+});
+
+test('typed and unavailable speech counts disclose their sources', () => {
+  const records = [{ ...record, deliveries: [
+    { words: 12, fillers: { count: 0 }, fillerSource: 'dictation', transcriptionStatus: 'unavailable' },
+    { words: 12, fillers: { count: 0 }, fillerSource: 'typed', transcriptionStatus: 'not-needed' },
+  ] }];
+  const html = render(null, { pending: true }, records);
+  assert.match(html, /dictation estimates/);
+  assert.match(html, /totals include typed answers/);
 });

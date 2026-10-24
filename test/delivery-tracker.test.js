@@ -186,3 +186,120 @@ test('stop releases devices and worker; reset removes the previous interview tra
   assert.deepEqual(tracker.voiceFrames, []);
   assert.deepEqual(tracker.marks, []);
 });
+
+test('settle clears its deadline timer when transcription finishes first', async (t) => {
+  const { tracker } = harness(t);
+  const timers = new Map();
+  globalValue(t, 'setTimeout', (fn) => { timers.set(1, fn); return 1; });
+  globalValue(t, 'clearTimeout', (id) => timers.delete(id));
+  let finish;
+  tracker.pending.add(new Promise((resolve) => { finish = resolve; }));
+  const settling = tracker.settle();
+  assert.equal(timers.size, 1);
+  finish();
+  await settling;
+  assert.equal(timers.size, 0);
+});
+
+test('settle returns at the deadline even if transcription never finishes', async (t) => {
+  const { tracker } = harness(t);
+  let expire;
+  globalValue(t, 'setTimeout', (fn) => { expire = fn; return 1; });
+  globalValue(t, 'clearTimeout', () => {});
+  tracker.pending.add(new Promise(() => {}));
+  const settling = tracker.settle();
+  expire();
+  await settling;
+  assert.equal(tracker.pending.size, 1);
+});
+
+test('a transcription completing after reset cannot update the old or new session', async (t) => {
+  const { tracker } = harness(t);
+  let finish;
+  t.mock.method(api, 'transcribe', () => new Promise((resolve) => { finish = resolve; }));
+  const part = { fillers: { count: 0, byWord: {} }, words: 3 };
+  tracker._transcribe(part, new Blob());
+  const previous = tracker.pending;
+  tracker.reset();
+  const currentJob = new Promise(() => {});
+  tracker.pending.add(currentJob);
+  finish({ text: 'Um uh I shipped it' });
+  await Promise.all([...previous]);
+  assert.equal(previous.size, 0);
+  assert.equal(part.fillers.count, 0);
+  assert.equal(part.words, 3);
+  assert.deepEqual([...tracker.pending], [currentJob]);
+});
+
+test('audio crossing the five-minute cap stays bounded and keeps whole-answer fallback counts', (t) => {
+  const { tracker } = harness(t);
+  tracker.t0 = 1000;
+  t.mock.method(api, 'transcribe', () => assert.fail('must not transcribe a truncated prefix'));
+  tracker.beginSegment('b1');
+  // Only the final few samples are needed to exercise the cap boundary.
+  const seg = tracker.segment;
+  seg.pcmLen = 16000 * 300 - 2;
+  tracker._pushPcm(seg, new Float32Array(8), 16000);
+  assert.equal(seg.pcmLen, 16000 * 300);
+  assert.equal(seg.pcm[0].length, 2);
+  assert.equal(seg.pcmTruncated, true);
+  tracker._pushPcm(seg, new Float32Array(8), 16000);
+  assert.equal(seg.pcm.length, 1);
+  const part = tracker.endSegment({ text: 'Um I shipped it', spokenText: 'Um I shipped it' });
+  assert.equal(part.words, 4);
+  assert.equal(part.fillers.count, 1);
+});
+
+test('background transcription updates after stop, retains speech scope, and notifies subscribers', async (t) => {
+  const { tracker } = harness(t);
+  tracker.t0 = 1000;
+  let finish, signal, changes = 0;
+  t.mock.method(api, 'transcribe', (_blob, options) => {
+    signal = options.signal;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  tracker.subscribe(() => changes++);
+  tracker.beginSegment('b1');
+  tracker._pushPcm(tracker.segment, new Float32Array(32000), 16000);
+  const part = tracker.endSegment({ text: 'I typed extra details after speaking.', spokenText: 'Um I shipped it' });
+  assert.equal(part.words, 4);
+  assert.equal(part.transcriptionStatus, 'pending');
+  tracker.stop();
+  assert.equal(signal.aborted, false);
+  finish({ text: 'Um uh I shipped it' });
+  await Promise.all([...tracker.pending]);
+  assert.equal(part.words, 5);
+  assert.equal(part.fillerSource, 'verbatim');
+  assert.equal(part.transcriptionStatus, 'ready');
+  assert.equal(changes, 1);
+});
+
+test('failed, empty, and cancelled transcriptions keep estimates instead of confirming zero', async (t) => {
+  const { tracker } = harness(t);
+  for (const result of ['failure', 'empty', 'cancelled']) {
+    let signal;
+    t.mock.method(api, 'transcribe', async (_blob, options) => {
+      signal = options.signal;
+      if (result === 'failure') throw new Error('offline');
+      if (result === 'cancelled') tracker.cancelTranscriptions();
+      return { text: '' };
+    });
+    const part = { words: 4, fillers: { count: 1 }, fillerSource: 'dictation' };
+    tracker._transcribe(part, new Blob());
+    await Promise.all([...tracker.pending]);
+    assert.equal(part.transcriptionStatus, 'unavailable');
+    assert.equal(part.fillers.count, 1);
+    assert.equal(part.fillerSource, 'dictation');
+    assert.equal(signal.aborted, result === 'cancelled');
+  }
+});
+
+test('candidate questions outside scored answers do not start unused transcriptions', (t) => {
+  const { tracker } = harness(t);
+  tracker.t0 = 1000;
+  t.mock.method(api, 'transcribe', () => assert.fail('must not upload unscored questions'));
+  tracker.beginSegment(null);
+  tracker._pushPcm(tracker.segment, new Float32Array(32000), 16000);
+  tracker.endSegment({ spokenText: 'How does the team work?' });
+  assert.equal(tracker.pending.size, 0);
+});
