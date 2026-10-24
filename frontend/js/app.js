@@ -1,6 +1,8 @@
 import { InterviewSession, STAR_TIP } from './interview.js';
 import { api } from './api.js';
-import { renderReport, escapeHtml } from './report.js';
+import { renderReport, renderProblem, escapeHtml } from './report.js';
+import { Camera, Dictation } from './media.js';
+import { DeliveryTracker } from './delivery.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -37,6 +39,12 @@ const els = {
   retryWeakBtn: $('#retry-weak-btn'),
   newBtn: $('#new-btn'),
   themeToggle: $('#theme-toggle'),
+  camVideo: $('#cam-video'),
+  camOff: $('#cam-off'),
+  camBtn: $('#cam-btn'),
+  recDot: $('#rec-dot'),
+  micBtn: $('#mic-btn'),
+  micStatus: $('#mic-status'),
 };
 
 let session = null;
@@ -44,6 +52,11 @@ let busy = false;
 let lastReport = null;
 let timerHandle = null;
 let codeFor = null; // record id the code editor currently belongs to
+
+// Proactive hints: if the candidate goes quiet on a technical question, the interviewer checks in.
+const QUIET_BEFORE_HINT = { coding: 150, sql: 150, other: 90 }; // seconds
+let lastActivityAt = Date.now();
+let lastInputSnapshot = '';
 
 // ---------------------------------------------------------------------------
 // Theme (per-viewer convenience only)
@@ -74,6 +87,7 @@ els.themeToggle.addEventListener('click', () => {
 
 function show(name) {
   for (const [key, el] of Object.entries(els.screens)) el.hidden = key !== name;
+  if (name !== 'interview') stopMedia();
   window.scrollTo({ top: 0 });
 }
 
@@ -106,12 +120,15 @@ els.setupForm.addEventListener('submit', (e) => {
     length: f.get('length'),
     model: f.get('model'),
     timer: f.get('timer') === 'on',
+    autoHints: f.get('autoHints') === 'on',
   });
 });
 
 function startInterview(setup) {
   session = new InterviewSession(setup);
   lastReport = null;
+  delivery.reset();
+  dictation.takeHeard();
   codeFor = null;
   els.transcript.innerHTML = '';
   els.answer.value = '';
@@ -121,6 +138,7 @@ function startInterview(setup) {
   els.roleLine.textContent = `${setup.level} ${setup.role}${setup.companyType ? ` · ${setup.companyType}` : ''}${setup.retry ? ' · Retry of weak questions' : ''}`;
   hideError();
   show('interview');
+  startMedia();
   startTimer();
   runTurn(session.prepareOpen());
 }
@@ -128,7 +146,7 @@ function startInterview(setup) {
 // ---------------------------------------------------------------------------
 // Transcript
 
-function appendMessage(role, text, code = '') {
+function appendMessage(role, text, code = '', problem = null) {
   const wrap = document.createElement('div');
   wrap.className = `msg msg-${role}`;
   const avatar = role === 'interviewer' ? '<div class="avatar" aria-hidden="true">J</div>' : '';
@@ -141,6 +159,15 @@ function appendMessage(role, text, code = '') {
       ${code ? `<pre class="code-block">${escapeHtml(code)}</pre>` : ''}
     </div>`;
   els.transcript.append(wrap);
+  if (problem) {
+    const card = document.createElement('article');
+    card.className = 'card problem';
+    card.innerHTML = renderProblem(problem);
+    els.transcript.append(card);
+    // Land on the top of the statement, not the bottom.
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
   wrap.scrollIntoView({ behavior: 'smooth', block: 'end' });
 }
 
@@ -157,7 +184,8 @@ async function runTurn(prepared) {
   try {
     const res = await api.interview(prepared.payload);
     prepared.commit(res);
-    appendMessage('interviewer', res.text);
+    appendMessage('interviewer', res.text, '', res.problem);
+    markActivity(); // the quiet clock restarts after every interviewer turn
   } catch (err) {
     showError(err.message, () => runTurn(prepared));
   } finally {
@@ -186,18 +214,42 @@ function sendAnswer() {
   const code = coding ? els.code.value : '';
   if (!text.trim() && !code.trim()) return;
 
+  // File this answer's delivery measurements under the question being answered.
+  delivery.endAnswer(session.inRound ? session.record?.id : null, dictation.takeHeard());
   const prepared = session.prepareAnswer({ text, code, explanation: text });
   appendMessage('candidate', prepared.display.text, prepared.display.code);
   els.answer.value = '';
+  dictation.base = '';
   runTurn(prepared);
 }
 
 els.hintBtn.addEventListener('click', () => {
-  if (busy || !session?.inRound || !els.error.hidden) return;
+  if (busy || !session?.canHint() || !els.error.hidden) return;
   const prepared = session.prepareHint();
   appendMessage('candidate', prepared.display.text);
   runTurn(prepared);
 });
+
+function markActivity() {
+  lastActivityAt = Date.now();
+}
+
+/** Typing, dictation, and code edits all change the inputs; no change for a while means they're stuck. */
+function checkQuiet() {
+  if (!session?.setup.autoHints || busy || session.done || !els.error.hidden || !session.canHint()) {
+    markActivity();
+    return;
+  }
+  const snapshot = `${els.answer.value}\u0000${els.code.value}`;
+  if (snapshot !== lastInputSnapshot) {
+    lastInputSnapshot = snapshot;
+    markActivity();
+    return;
+  }
+  const limit = QUIET_BEFORE_HINT[session.planItem?.type] ?? QUIET_BEFORE_HINT.other;
+  const quiet = Math.round((Date.now() - lastActivityAt) / 1000);
+  if (quiet >= limit) runTurn(session.prepareHint({ idleSeconds: quiet }));
+}
 
 els.endBtn.addEventListener('click', () => {
   if (!session || busy) return;
@@ -239,6 +291,7 @@ function updateChrome() {
 
   els.hintBtn.hidden = !technical;
   const hints = session.record?.hintsUsed ?? 0;
+  els.hintBtn.textContent = session.canHint() ? `I'm stuck (${session.hintsLeft} hint${session.hintsLeft === 1 ? '' : 's'} left today)` : 'No hints left today';
   els.hintCount.textContent = technical && hints ? `${hints} hint${hints > 1 ? 's' : ''} used` : '';
 
   // Code editor belongs to one coding question; clear it when a new one starts.
@@ -259,6 +312,11 @@ function updateChrome() {
   els.finished.hidden = !session.done;
   els.endBtn.textContent = session.done ? 'Go to feedback' : 'End interview';
   for (const el of [els.answer, els.code, els.sendBtn, els.hintBtn]) el.disabled = busy;
+  if (!session.canHint()) els.hintBtn.disabled = true;
+  // Don't transcribe while the interviewer is replying or after the interview ends.
+  dictation.setPaused(busy);
+  if (session.done) dictation.stop();
+  syncDelivery();
 
   els.timer.hidden = !session.setup.timer || session.questionSeconds() == null;
   if (session.done) stopTimer();
@@ -267,6 +325,7 @@ function updateChrome() {
 function startTimer() {
   stopTimer();
   timerHandle = setInterval(() => {
+    checkQuiet();
     const s = session?.questionSeconds();
     if (s == null) return;
     els.timer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -278,6 +337,72 @@ function stopTimer() {
   clearInterval(timerHandle);
   timerHandle = null;
 }
+
+// ---------------------------------------------------------------------------
+// Webcam and dictation
+
+const camera = new Camera(els.camVideo);
+const delivery = new DeliveryTracker(els.camVideo);
+const dictation = new Dictation(els.answer, ({ listening, error }) => {
+  syncDelivery();
+  els.micBtn.setAttribute('aria-pressed', String(dictation.wanted));
+  els.micBtn.textContent = dictation.wanted ? 'Stop speaking' : 'Start speaking';
+  els.recDot.hidden = !listening;
+  if (error) els.micStatus.textContent = error;
+  else if (listening) els.micStatus.textContent = 'Listening… your words appear in the answer box.';
+  else if (dictation.wanted) els.micStatus.textContent = 'Mic paused while the interviewer responds.';
+  else els.micStatus.textContent = 'Mic off. Click Start speaking, or type below.';
+});
+
+if (!Dictation.supported) {
+  els.micBtn.disabled = true;
+  els.micStatus.textContent = 'Voice transcription is not supported in this browser (try Chrome or Edge). You can type instead.';
+}
+
+function updateCamChrome() {
+  els.camOff.hidden = camera.on;
+  els.camBtn.textContent = camera.on ? 'Turn camera off' : 'Turn camera on';
+  syncDelivery();
+}
+
+/** Measure face and voice only during the candidate's turn, and voice only while dictating. */
+function syncDelivery() {
+  const turn = Boolean(session) && !busy && !session.done && !els.screens.interview.hidden;
+  delivery.setActive({ face: turn && camera.on, voice: turn && dictation.listening });
+}
+
+async function startCamera() {
+  try {
+    await camera.start();
+  } catch (err) {
+    els.camOff.textContent = err.name === 'NotAllowedError' ? 'Camera blocked' : 'No camera found';
+  }
+  updateCamChrome();
+}
+
+function startMedia() {
+  startCamera();
+  if (Dictation.supported) dictation.start();
+}
+
+function stopMedia() {
+  camera.stop();
+  dictation.stop();
+  delivery.stop();
+  updateCamChrome();
+}
+
+els.camBtn.addEventListener('click', () => {
+  if (camera.on) {
+    camera.stop();
+    els.camOff.textContent = 'Camera off';
+    updateCamChrome();
+  } else {
+    startCamera();
+  }
+});
+
+els.micBtn.addEventListener('click', () => dictation.toggle());
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -348,19 +473,33 @@ async function loadReport() {
   els.retryWeakBtn.hidden = true;
   els.reportLoading.hidden = false;
   try {
-    const result = await api.evaluate(session.evaluationPayload());
+    await delivery.settle(); // let verbatim filler counts land first
+    const payload = session.evaluationPayload();
+    const measured = deliverySummaries(payload.records.map((r) => r.id));
+    for (const r of payload.records) r.delivery = measured.byRecord[r.id];
+    payload.delivery = measured.overall;
+    const result = await api.evaluate(payload);
     lastReport = result.ok ? result.report : null;
-    renderReport(els.report, session, result);
+    renderReport(els.report, session, result, measured);
     els.rescoreBtn.hidden = result.ok;
     els.retryWeakBtn.hidden = false;
   } catch (err) {
     els.reportError.hidden = false;
     els.reportError.textContent = err.message;
     els.rescoreBtn.hidden = err.code === 'NOTHING_TO_SCORE';
-    if (session.answeredRecords().length) renderReport(els.report, session, { ok: false });
+    if (session.answeredRecords().length) {
+      renderReport(els.report, session, { ok: false }, deliverySummaries(session.answeredRecords().map((r) => r.id)));
+    }
   } finally {
     els.reportLoading.hidden = true;
   }
+}
+
+function deliverySummaries(ids) {
+  return {
+    overall: delivery.summary(),
+    byRecord: Object.fromEntries(ids.map((id) => [id, delivery.summaryFor(id)])),
+  };
 }
 
 els.retryWeakBtn.addEventListener('click', () => {

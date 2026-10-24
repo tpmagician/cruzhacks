@@ -6,9 +6,11 @@
 export const LENGTHS = { short: 3, standard: 5, long: 8 };
 export const MAX_FOLLOWUPS = 2;
 export const MAX_CANDIDATE_QUESTIONS = 3;
+import { hintsLeftToday, useHint } from './hints.js';
 
 const OPENING_CUE = '(The candidate has joined the video call and is ready to begin.)';
 const HINT_REQUEST = "I'm stuck. Could I get a small hint?";
+const quietCue = (seconds) => `(The candidate has been quiet for about ${seconds} seconds without typing or speaking.)`;
 const END_REQUEST = "I'm afraid I need to stop here. Could we wrap up?";
 
 export const STAR_TIP = `Structure your answer with STAR:
@@ -144,6 +146,11 @@ function buildPlans(setup) {
 
 const ROUND_TITLE = { behavioral: 'Behavioral', technical: 'Technical' };
 
+/** What the interviewer said, plus the on-screen problem statement if there was one. */
+function fullReply(res) {
+  return res.problem?.raw ? `${res.text}\n\n${res.problem.raw}` : res.text;
+}
+
 export class InterviewSession {
   constructor(setup) {
     this.setup = setup;
@@ -180,6 +187,15 @@ export class InterviewSession {
     return this.inRound ? this.records.at(-1) : null;
   }
 
+  /** Hints come from a daily allowance shared across interviews; see hints.js. */
+  get hintsLeft() {
+    return this.stage === 'technical' ? hintsLeftToday() : 0;
+  }
+
+  canHint() {
+    return this.hintsLeft > 0;
+  }
+
   isCodingQuestion() {
     return this.inRound && ['coding', 'sql'].includes(this.planItem?.type);
   }
@@ -193,7 +209,7 @@ export class InterviewSession {
         const total = this.plans[this.round].length;
         let label = `${ROUND_TITLE[this.round]} · Question ${this.qIdx + 1} of ${total}`;
         if (this.lastKind === 'followup') label += ` · Follow-up ${this.followups} of ${MAX_FOLLOWUPS}`;
-        if (this.lastKind === 'hint') label += ' · Hint';
+        if (this.lastKind === 'hint') label += ` · Hint ${this.record.hintsUsed}`;
         return label;
       }
       case 'candidate_questions':
@@ -228,7 +244,8 @@ export class InterviewSession {
     return { action, round, number: idx + 1, total: this.plans[round].length, type: item.type, topic: item.topic, retryText: item.retryText };
   }
 
-  _advance(next, interviewerText) {
+  _advance(next, res) {
+    const interviewerText = fullReply(res);
     this._closeRecord();
     this._lastCode = '';
     this.followups = 0;
@@ -251,6 +268,7 @@ export class InterviewSession {
       type: next.type,
       topic: next.topic,
       question: interviewerText,
+      problem: res.problem ?? null,
       turns: [{ speaker: 'interviewer', text: interviewerText }],
       code: '',
       explanation: '',
@@ -291,6 +309,8 @@ export class InterviewSession {
         totalQuestions: this.plans[this.round]?.length ?? 0,
         followupsUsed: this.followups,
         maxFollowups: MAX_FOLLOWUPS,
+        hintsUsed: this.record?.hintsUsed ?? 0,
+        hintsLeftToday: hintsLeftToday(),
         current: this.planItem ? { type: this.planItem.type, topic: this.planItem.topic } : null,
         ...extras,
       },
@@ -308,8 +328,8 @@ export class InterviewSession {
     return {
       payload: this._payload('open', { next, roundsPlanned }, OPENING_CUE),
       commit: (res) => {
-        this._push(OPENING_CUE, res.text);
-        this._advance(next, res.text);
+        this._push(OPENING_CUE, fullReply(res));
+        this._advance(next, res);
       },
     };
   }
@@ -344,7 +364,7 @@ export class InterviewSession {
       display,
       payload: this._payload('answer', { forced, next, includesCode }, userText),
       commit: (res) => {
-        this._push(userText, res.text);
+        this._push(userText, fullReply(res));
         const rec = this.record;
         rec.turns.push({ speaker: 'candidate', text: userText });
         if (coding) {
@@ -352,27 +372,43 @@ export class InterviewSession {
           if (explanation.trim()) rec.explanation = explanation.trim();
           this._lastCode = code;
         }
+        // The interviewer judged them stuck and gave a hint instead of a follow-up.
+        if (!forced && res.action === 'HINT' && hintsLeftToday() > 0) {
+          useHint();
+          rec.hintsUsed++;
+          this.lastKind = 'hint';
+          rec.turns.push({ speaker: 'interviewer', text: `(Hint ${rec.hintsUsed}) ${res.text}` });
+          return;
+        }
         // A missing tag is treated as a follow-up; the follow-up cap keeps things moving.
         if (!forced && res.action !== 'NEXT') {
           this.followups++;
           this.lastKind = 'followup';
           rec.turns.push({ speaker: 'interviewer', text: res.text });
         } else {
-          this._advance(next, res.text);
+          this._advance(next, res);
         }
       },
     };
   }
 
-  prepareHint() {
+  /**
+   * A hint on the current technical question: asked for by the candidate, or
+   * offered by the interviewer after a quiet stretch (`idleSeconds`).
+   */
+  prepareHint({ idleSeconds = null } = {}) {
+    const proactive = idleSeconds != null;
+    const userText = proactive ? quietCue(idleSeconds) : HINT_REQUEST;
     return {
-      display: { text: HINT_REQUEST },
-      payload: this._payload('hint', {}, HINT_REQUEST),
+      display: proactive ? null : { text: HINT_REQUEST },
+      payload: this._payload('hint', { idleSeconds: proactive ? idleSeconds : 0 }, userText),
       commit: (res) => {
-        this._push(HINT_REQUEST, res.text);
+        this._push(userText, res.text);
         const rec = this.record;
+        useHint();
         rec.hintsUsed++;
-        rec.turns.push({ speaker: 'candidate', text: HINT_REQUEST }, { speaker: 'interviewer', text: `(Hint) ${res.text}` });
+        if (!proactive) rec.turns.push({ speaker: 'candidate', text: HINT_REQUEST });
+        rec.turns.push({ speaker: 'interviewer', text: `(Hint ${rec.hintsUsed}${proactive ? ', offered after a quiet stretch' : ''}) ${res.text}` });
         this.lastKind = 'hint';
       },
     };
