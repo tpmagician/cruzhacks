@@ -186,6 +186,7 @@ async function runTurn(prepared) {
     prepared.commit(res);
     appendMessage('interviewer', res.text, '', res.problem);
     markActivity(); // the quiet clock restarts after every interviewer turn
+    if (session.done) scheduleReport();
   } catch (err) {
     showError(err.message, () => runTurn(prepared));
   } finally {
@@ -460,7 +461,21 @@ els.code.addEventListener('keydown', (e) => {
 els.reportBtn.addEventListener('click', goToReport);
 els.rescoreBtn.addEventListener('click', loadReport);
 
+// When the interviewer closes the interview, open the report on its own after a
+// short pause so the goodbye can be read.
+const REPORT_DELAY_MS = 3000;
+let reportTimer = null;
+
+function scheduleReport() {
+  clearTimeout(reportTimer);
+  const forSession = session;
+  reportTimer = setTimeout(() => {
+    if (session === forSession && !els.screens.interview.hidden) goToReport();
+  }, REPORT_DELAY_MS);
+}
+
 function goToReport() {
+  clearTimeout(reportTimer);
   stopTimer();
   show('report');
   loadReport();
