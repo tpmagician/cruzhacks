@@ -198,7 +198,6 @@ els.setupForm.addEventListener('submit', (e) => {
     level: f.get('level'),
     companyType: String(f.get('companyType') ?? '').trim(),
     rounds,
-    length: f.get('length'),
     model: f.get('model'),
     timer: f.get('timer') === 'on',
     voice: f.get('voice') === 'on',

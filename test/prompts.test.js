@@ -39,3 +39,14 @@ test('evaluation preserves question IDs, final code, hint usage, and transcript 
   assert.match(prompt, /Final code in editor:\nreturn 42;/);
   assert.doesNotMatch(prompt, /"strongerAnswer"/);
 });
+
+test('presenting a coding or SQL problem uses minimal thinking to stay within the turn deadline', () => {
+  for (const type of ['coding', 'sql']) {
+    const presenting = buildInterviewerTurn(setup, { ...turn, current: { type: 'conceptual', topic: 'caching' }, next: { action: 'next', round: 'technical', number: 2, total: 3, type, topic: 'joins' } });
+    assert.match(presenting.systemInstruction, /<problem>/);
+    assert.equal(presenting.thinking, 'minimal');
+  }
+  // Reviewing submitted code still reasons more carefully (measured ~10 s, within the limit).
+  const reviewing = buildInterviewerTurn(setup, { ...turn, includesCode: true, next: { action: 'next', round: 'technical', number: 2, total: 3, type: 'coding', topic: 'joins' } });
+  assert.equal(reviewing.thinking, 'high');
+});

@@ -5,7 +5,8 @@
 import { combineDeliveries } from './delivery-metrics.js';
 import { hintsLeftToday, useHint } from './hints.js';
 
-export const LENGTHS = { short: 3, standard: 5, long: 8 };
+// Fixed for demo-length interviews (and a ~30 s evaluation): 2 + 2 with both rounds, 4 with one.
+export const QUESTIONS_PER_INTERVIEW = 4;
 export const MAX_FOLLOWUPS = 2;
 export const MAX_CANDIDATE_QUESTIONS = 3;
 
@@ -135,7 +136,7 @@ function buildPlans(setup) {
   if (setup.retry?.length) {
     for (const item of setup.retry) (plans[item.round] ??= []).push({ ...item });
   } else {
-    const n = LENGTHS[setup.length] ?? LENGTHS.standard;
+    const n = QUESTIONS_PER_INTERVIEW / setup.rounds.length;
     if (setup.rounds.includes('behavioral')) plans.behavioral = behavioralPlan(n);
     if (setup.rounds.includes('technical')) plans.technical = technicalPlan(roleCategory(setup.role), n);
   }

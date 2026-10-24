@@ -23,16 +23,18 @@ test('role routing recognizes SWE, analyst, PM, and generic roles', () => {
   assert.equal(roleCategory('Accountant'), 'general');
 });
 
-test('plans respect selected rounds and lengths, with coding or SQL slots', (t) => {
+test('interviews have 4 main questions: 2 + 2 with both rounds, 4 with one, with a coding or SQL slot', (t) => {
   fresh(t);
-  for (const [length, count] of [['short', 3], ['standard', 5], ['long', 8]]) {
-    const session = new InterviewSession({ ...setup, length });
-    assert.equal(session.plans.behavioral.length, count);
-    assert.equal(session.plans.technical.length, count);
-    assert.equal(new Set(session.plans.behavioral.map((q) => q.topic)).size, count);
-    assert.equal(session.plans.technical.filter((q) => q.type === 'coding').length, length === 'long' ? 2 : 1);
-  }
+  const both = new InterviewSession(setup);
+  assert.equal(both.plans.behavioral.length, 2);
+  assert.equal(both.plans.technical.length, 2);
+  assert.equal(new Set(both.plans.behavioral.map((q) => q.topic)).size, 2);
+  assert.equal(both.plans.technical.filter((q) => q.type === 'coding').length, 1);
+  const behavioral = new InterviewSession({ ...setup, rounds: ['behavioral'] });
+  assert.equal(behavioral.plans.behavioral.length, 4);
+  assert.equal(behavioral.plans.technical, undefined);
   const analyst = new InterviewSession({ ...setup, role: 'Data Analyst', rounds: ['technical'] });
+  assert.equal(analyst.plans.technical.length, 4);
   assert.deepEqual(analyst.rounds, ['technical']);
   assert.ok(analyst.plans.technical.some((q) => q.type === 'sql'));
   assert.equal(analyst.plans.behavioral, undefined);
@@ -59,19 +61,19 @@ test('a complete interview advances rounds, closes records, and caps candidate q
   t.mock.method(Date, 'now', () => now);
   const session = fresh(t);
   open(session);
-  for (const id of ['b1', 'b2', 'b3', 't1', 't2', 't3']) {
+  for (const id of ['b1', 'b2', 't1', 't2']) {
     assert.equal(session.record.id, id);
     now += 5000;
     session.prepareAnswer({ text: 'My reasoning.', explanation: 'My reasoning.', code: 'return 1;' }).commit(reply());
   }
   assert.equal(session.stage, 'candidate_questions');
   assert.equal(session.done, false);
-  assert.deepEqual(session.records.map((r) => r.seconds), [5, 5, 5, 5, 5, 5]);
+  assert.deepEqual(session.records.map((r) => r.seconds), [5, 5, 5, 5]);
   assert.ok(session.records.every((r) => r.closed));
   for (let i = 0; i < 3; i++) session.prepareAnswer({ text: 'How does the team work?' }).commit(reply('We collaborate.', 'CONTINUE'));
   assert.equal(session.done, true);
   assert.equal(session.stage, 'wrapup');
-  assert.equal(session.answeredRecords().length, 6);
+  assert.equal(session.answeredRecords().length, 4);
 });
 
 test('missing action tags count as follow-ups, and the cap forces advancement', (t) => {

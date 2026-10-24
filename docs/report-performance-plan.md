@@ -229,6 +229,13 @@ exercise the real Express/provider retry paths.
   stronger STAR rewrites / 3–6 sentence model approaches behind on-demand actions
   if output generation is a measured bottleneck. Update schema and renderer
   together; do not mistake deliberately omitted fields for failed scoring.
+- **Done (Oct 24):** the evaluator now uses minimal thinking. Under the 30 s
+  attempt limit, high thinking could not finish at all (measured over 150 s for
+  two questions), so there was no working baseline to compare against. Measured
+  end to end with minimal thinking on 26B: 2 questions 18.9 s, 4 questions 29.6 s,
+  5 questions 34.6 s, 8 questions 45.8 s, all scored. Interviews are now fixed at
+  4 main questions. A side-by-side quality comparison can still be run offline
+  without deadlines.
 - Benchmark lower thinking separately on a fixed set of behavioral and code
   answers before adopting it. Do not assume that reducing thinking preserves
   scoring quality. Keep strict JSON validation and bounded repair.

@@ -44,6 +44,7 @@ function post(url, body, options) {
 export const api = {
   health: () => request('/api/health', {}, { timeoutMs: 10000 }),
   interview: (body, options) => post('/api/interview', body, options),
-  evaluate: (body, options) => post('/api/evaluate', body, options),
+  // Slightly longer than the server's 95 s evaluation budget, so its error arrives first.
+  evaluate: (body, options) => post('/api/evaluate', body, { timeoutMs: 100000, ...options }),
   transcribe: (wav, options) => post('/api/transcribe', wav, options),
 };

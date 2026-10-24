@@ -244,9 +244,9 @@ If they said they have no more questions or are ready to finish, close the inter
       throw new Error(`Unknown turn kind: ${turn.kind}`);
   }
 
-  // Presenting a coding or SQL problem: ask for the on-screen block, and think harder so the examples are right.
+  // Presenting a coding or SQL problem: ask for the on-screen block. This stays at
+  // minimal thinking: high thinking measured 80 s here, past the 30 s turn limit.
   const presents = (turn.kind === 'open' || turn.kind === 'answer') && isProblemType(turn.next?.type);
-  if (presents) thinking = 'high';
   const problem = presents ? problemFormat(turn.next.type) : '';
 
   const systemInstruction = [persona(setup), SPEAKING_RULES, stateBlock(turn), `What to do now:\n${directive}`, problem, format]

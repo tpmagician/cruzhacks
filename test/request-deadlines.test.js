@@ -85,7 +85,7 @@ const body = {
 
 test('evaluation JSON repair shares the route deadline and omits changing filler metrics', async (t) => {
   const c = clock(t), requests = [];
-  const r = route({ requestTimeoutMs: 7000, generateContent: async (request) => {
+  const r = route({ evaluateTimeoutMs: 7000, generateContent: async (request) => {
     requests.push(request);
     if (requests.length === 1) return 'invalid JSON';
     return new Promise(() => {});
@@ -136,4 +136,29 @@ test('successful and empty evaluation routes retain their response contracts', a
   assert.equal(good.res.data.report.overall.score, 4);
   const empty = route({}, '/api/evaluate', {});
   await assert.rejects(empty.handler(empty.req, empty.res), (err) => err.code === 'NOTHING_TO_SCORE');
+});
+
+test('evaluation uses minimal thinking with a longer budget than interviewer turns', async () => {
+  const calls = { evaluate: [], interview: [] };
+  const generateContent = (key) => async (request) => { calls[key].push(request); return key === 'evaluate' ? '{"overall":{"score":4}}' : 'Thanks. Next question.'; };
+  const evaluate = route({ generateContent: generateContent('evaluate') }, '/api/evaluate', body);
+  await evaluate.handler(evaluate.req, evaluate.res);
+  assert.equal(evaluate.res.data.ok, true);
+  assert.equal(calls.evaluate[0].thinking, 'minimal');
+  assert.equal(calls.evaluate[0].attemptTimeoutMs, 60000);
+  assert.equal(calls.evaluate[0].timeoutMs, 90000);
+  const interview = route({ generateContent: generateContent('interview') }, '/api/interview', { setup: { role: 'Engineer' }, turn: { kind: 'open', stage: 'intro' }, history: [{ role: 'user', text: 'Hi' }] });
+  await interview.handler(interview.req, interview.res);
+  assert.equal(calls.interview[0].attemptTimeoutMs, undefined, 'interviewer turns keep the default 30 s attempt limit');
+  assert.equal(calls.interview[0].timeoutMs, undefined);
+});
+
+test('the evaluation route allows 95 s by default while other routes keep 60 s', async (t) => {
+  const c = clock(t);
+  const r = route({ generateContent: () => new Promise(() => {}) }, '/api/evaluate', body);
+  const waiting = r.handler(r.req, r.res);
+  await flush();
+  assert.ok([...c.timers.values()].some((timer) => timer.ms === 95000));
+  c.fire(95000);
+  await assert.rejects(waiting, (err) => err.code === 'DEADLINE_EXCEEDED');
 });

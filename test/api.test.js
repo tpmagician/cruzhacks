@@ -17,6 +17,16 @@ test('interview and evaluation requests send JSON to their respective routes', a
   assert.deepEqual(JSON.parse(requests[0].options.body), body);
 });
 
+test('evaluation waits longer than the server budget; other calls keep the default', async (t) => {
+  const waits = [];
+  t.mock.method(globalThis, 'setTimeout', (_fn, ms) => { waits.push(ms); return waits.length; });
+  t.mock.method(globalThis, 'clearTimeout', () => {});
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  await api.evaluate({});
+  await api.interview({});
+  assert.deepEqual(waits, [100000, 65000]);
+});
+
 test('transcription uploads raw audio without JSON or base64 conversion', async (t) => {
   const audio = new Blob(['test audio'], { type: 'audio/wav' });
   t.mock.method(globalThis, 'fetch', async (url, options) => {

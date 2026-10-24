@@ -160,7 +160,13 @@ function cleanRecords(records) {
   });
 }
 
-export function createApp({ generateContent = generate, transcribe = transcribeVerbatim, requestTimeoutMs = 60000 } = {}) {
+// Evaluation reasons over the whole interview, so it gets minimal thinking (high
+// thinking measured at over 150 s for two questions) and a longer budget than
+// interviewer turns: 60 s per attempt, 90 s per generation, 95 s for the route,
+// which also covers the JSON repair retry. The browser waits slightly longer.
+const EVALUATION = { thinking: 'minimal', attemptTimeoutMs: 60_000, timeoutMs: 90_000 };
+
+export function createApp({ generateContent = generate, transcribe = transcribeVerbatim, requestTimeoutMs = 60000, evaluateTimeoutMs = 95000 } = {}) {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
   // Expose only the browser runtime, never the rest of node_modules.
@@ -214,7 +220,7 @@ export function createApp({ generateContent = generate, transcribe = transcribeV
 
     const prompt = buildEvaluationPrompt(setup, records, cleanSessionDelivery(req.body?.delivery));
     const contents = [{ role: 'user', parts: [{ text: prompt }] }];
-    const opts = { model: setup.model, systemInstruction: EVALUATOR_INSTRUCTION, thinking: 'high', temperature: 0.2, signal };
+    const opts = { model: setup.model, systemInstruction: EVALUATOR_INSTRUCTION, temperature: 0.2, signal, ...EVALUATION };
 
     let out = await generateContent({ ...opts, contents });
     signal.throwIfAborted();
@@ -237,7 +243,7 @@ export function createApp({ generateContent = generate, transcribe = transcribeV
       return res.json({ ok: false, error: 'unable_to_score', message: 'The model did not return a valid evaluation after a retry.' });
     }
     res.json({ ok: true, report: normalizeEvaluation(parsed, records) });
-  }, requestTimeoutMs));
+  }, evaluateTimeoutMs));
 
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'NOT_FOUND', 'Unknown API route.')));
 

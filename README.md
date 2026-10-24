@@ -149,9 +149,16 @@ The structure lives in a JavaScript state machine (`frontend/js/interview.js`), 
 
 | Use | Model | Thinking level |
 | --- | --- | --- |
-| Live interviewer turns | `gemma-4-26b-a4b-it` (default) or `gemma-4-31b-it` (falls back to 26B on server errors) | `minimal` |
+| Live interviewer turns, including presenting a coding or SQL problem | `gemma-4-26b-a4b-it` (default) or `gemma-4-31b-it` (falls back to 26B on server errors) | `minimal` |
 | Turns where you submit code | same | `high` |
-| End-of-interview evaluation | same | `high` |
+| End-of-interview evaluation | same | `minimal` |
+
+High thinking was too slow for two of these. Measured on 26B: presenting a
+coding problem took 80 s with `high` (7.5 s with `minimal`), and evaluating two
+questions took over 150 s (19 s). Interviewer turns have 30 s per attempt and 60 s
+in total; evaluation has 60 s per attempt, 90 s per generation, and 95 s for the
+route including one JSON repair. Every interview has 4 main questions (2 behavioral
++ 2 technical, or 4 in a single round); its evaluation measured about 30 s.
 
 Conversation history goes to the model as multi-turn `contents`, with `user` for the candidate and `model` for the interviewer. The persona goes in `config.systemInstruction`. If a model ever rejects system instructions or the thinking config, `gemini.js` retries with that feature adapted.
 
