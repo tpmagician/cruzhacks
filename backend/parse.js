@@ -155,7 +155,7 @@ export function tryParseJson(raw) {
   if (start === -1 || end <= start) return null;
   const slice = text.slice(start, end + 1);
 
-  for (const candidate of [slice, slice.replace(/,\s*([}\]])/g, '$1')]) {
+  for (const candidate of [slice, removeTrailingCommas(slice)]) {
     try {
       const obj = JSON.parse(candidate);
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
@@ -164,6 +164,28 @@ export function tryParseJson(raw) {
     }
   }
   return null;
+}
+
+// Repair punctuation only outside JSON strings, preserving quoted evidence/code.
+function removeTrailingCommas(text) {
+  const out = [];
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quoted = false;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') {
+      let next = i + 1;
+      while (/\s/.test(text[next] ?? '') && next < text.length) next++;
+      if (text[next] === '}' || text[next] === ']') continue;
+    }
+    out.push(c);
+  }
+  return out.join('');
 }
 
 export const CRITERIA = {

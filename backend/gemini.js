@@ -1,5 +1,6 @@
 // Thin wrapper around @google/genai for Gemma 4 on the Gemini API.
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { deadline, abortable, delay } from '../frontend/js/async.js';
 
 export const MODELS = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it'];
 export const DEFAULT_MODEL = 'gemma-4-26b-a4b-it';
@@ -42,84 +43,79 @@ export function resolveModel(model) {
   return MODELS.includes(model) ? model : DEFAULT_MODEL;
 }
 
-/**
- * Calls generateContent and returns the reply text (thought parts excluded).
- * `contents` uses the SDK shape: [{ role: 'user' | 'model', parts: [{ text }] }].
- *
- * If the model rejects system instructions or the thinking config, retries once
- * per problem with that feature adapted (system prompt inlined / thinking dropped).
- * Transient server errors (500/503/504) are retried with exponential backoff, then
- * the request falls back to FALLBACK_MODEL once. Requests to other models that hang
- * past REQUEST_TIMEOUT_MS fall back too.
- */
-export async function generate({ model, systemInstruction, contents, thinking = 'minimal', temperature }) {
-  const ai = getClient();
-  let inlineSystem = false;
-  let useThinking = true;
-  let transientRetries = 0;
+/** Each invocation has a total budget; callers can share a stricter route signal. */
+export const generate = createGenerate(getClient);
 
-  // Terminates: each adaptation flag flips at most once, transient retries are capped,
-  // and the model falls back at most once.
-  for (;;) {
-    const config = {};
-    if (temperature != null) config.temperature = temperature;
-    if (useThinking) config.thinkingConfig = { thinkingLevel: THINKING[thinking] ?? THINKING.minimal };
-
-    let reqContents = contents;
-    if (systemInstruction) {
-      if (inlineSystem) reqContents = inlineSystemPrompt(contents, systemInstruction);
-      else config.systemInstruction = systemInstruction;
-    }
-
-    // Only time out when there is a model to fall back to; the fallback gets as long as it needs.
-    const canFallBack = model !== FALLBACK_MODEL;
-    const signal = canFallBack ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : undefined;
-    if (signal) config.abortSignal = signal;
-
+// Inject the SDK boundary for offline retry/deadline tests.
+export function createGenerate(clientFactory) {
+  return async function generate({ model, systemInstruction, contents, thinking = 'minimal', temperature,
+    signal: parent, timeoutMs = 60000, attemptTimeoutMs = 30000, maxTransientRetries = 1,
+    fallbackModel = FALLBACK_MODEL }) {
+    const scope = deadline(timeoutMs, parent);
     try {
-      const res = await ai.models.generateContent({ model, contents: reqContents, config });
-      return extractText(res);
+      const ai = clientFactory();
+      let inlineSystem = false;
+      let useThinking = true;
+      let transientRetries = 0;
+      for (;;) {
+        const attempt = deadline(attemptTimeoutMs, scope.signal);
+        const config = { abortSignal: attempt.signal };
+        if (temperature != null) config.temperature = temperature;
+        if (useThinking) config.thinkingConfig = { thinkingLevel: THINKING[thinking] ?? THINKING.minimal };
+        let reqContents = contents;
+        if (systemInstruction) {
+          if (inlineSystem) reqContents = inlineSystemPrompt(contents, systemInstruction);
+          else config.systemInstruction = systemInstruction;
+        }
+        // Audio models never inherit the interviewer's text-model fallback.
+        const canFallBack = fallbackModel && MODELS.includes(model) && model !== fallbackModel;
+        try {
+          const res = await abortable(attempt.signal, () => ai.models.generateContent({ model, contents: reqContents, config }));
+          return extractText(res);
+        } catch (err) {
+          if (scope.signal.aborted) throw scope.signal.reason;
+          if (attempt.signal.aborted) {
+            if (!canFallBack) throw attempt.signal.reason;
+            model = fallbackModel;
+            transientRetries = 0;
+            continue;
+          }
+          if (err instanceof AppError) throw err;
+          const status = err?.status;
+          const msg = String(err?.message ?? '');
+          if (status === 400 && !inlineSystem && /system[_ ]?instruction|developer instruction/i.test(msg)) {
+            inlineSystem = true;
+            continue;
+          }
+          if (status === 400 && useThinking && /think/i.test(msg)) {
+            useThinking = false;
+            continue;
+          }
+          if (TRANSIENT_STATUSES.has(status) && transientRetries < maxTransientRetries) {
+            await delay(1000 * 2 ** transientRetries++, scope.signal);
+            continue;
+          }
+          if (TRANSIENT_STATUSES.has(status) && canFallBack) {
+            model = fallbackModel;
+            transientRetries = 0;
+            continue;
+          }
+          throw toAppError(err);
+        } finally {
+          attempt.dispose();
+        }
+      }
     } catch (err) {
-      if (err instanceof AppError) throw err;
-      if (signal?.aborted) {
-        console.warn(`${model} timed out after ${REQUEST_TIMEOUT_MS / 1000}s; falling back to ${FALLBACK_MODEL}`);
-        model = FALLBACK_MODEL;
-        transientRetries = 0;
-        continue;
-      }
-      const status = err?.status;
-      const msg = String(err?.message ?? '');
-      if (status === 400 && !inlineSystem && /system[_ ]?instruction|developer instruction/i.test(msg)) {
-        inlineSystem = true;
-        continue;
-      }
-      if (status === 400 && useThinking && /think/i.test(msg)) {
-        useThinking = false;
-        continue;
-      }
-      if (TRANSIENT_STATUSES.has(status) && transientRetries < MAX_TRANSIENT_RETRIES) {
-        await sleep(1000 * 2 ** transientRetries);
-        transientRetries++;
-        continue;
-      }
-      if (TRANSIENT_STATUSES.has(status) && canFallBack) {
-        console.warn(`${model} unavailable (${status}); falling back to ${FALLBACK_MODEL}`);
-        model = FALLBACK_MODEL;
-        transientRetries = 0;
-        continue;
-      }
-      throw toAppError(err);
+      if (err?.name === 'TimeoutError') throw new AppError(504, 'DEADLINE_EXCEEDED', 'AI feedback took too long. Your local report is still available; please retry.');
+      if (err?.name === 'AbortError') throw new AppError(499, 'CANCELLED', 'Request cancelled.');
+      throw err;
+    } finally {
+      scope.dispose();
     }
-  }
+  };
 }
 
 const TRANSIENT_STATUSES = new Set([500, 503, 504]);
-const MAX_TRANSIENT_RETRIES = 3;
-const REQUEST_TIMEOUT_MS = 60_000;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function inlineSystemPrompt(contents, systemInstruction) {
   const [first, ...rest] = contents;

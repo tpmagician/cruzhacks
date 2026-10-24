@@ -248,9 +248,9 @@ If they said no, that they have no more questions, or that they are ready to fin
       throw new Error(`Unknown turn kind: ${turn.kind}`);
   }
 
-  // Presenting a coding or SQL problem: ask for the on-screen block, and think harder so the examples are right.
+  // Presenting a coding or SQL problem: ask for the on-screen block. This stays at
+  // minimal thinking: high thinking measured 80 s here, past the 30 s turn limit.
   const presents = (turn.kind === 'open' || turn.kind === 'answer') && isProblemType(turn.next?.type);
-  if (presents) thinking = 'high';
   const problem = presents ? problemFormat(turn.next.type) : '';
 
   const systemInstruction = [persona(setup), SPEAKING_RULES, stateBlock(turn), `What to do now:\n${directive}`, problem, format]
@@ -265,7 +265,8 @@ If they said no, that they have no more questions, or that they are ready to fin
 
 export const EVALUATOR_INSTRUCTION = `You are a rigorous, fair interview coach. You evaluate mock interview transcripts and return strict JSON only: no markdown, no code fences, no commentary before or after the JSON.
 
-Scoring scale (integers only): 1 = poor or no real answer, 2 = weak, 3 = adequate, 4 = strong, 5 = exceptional. Be calibrated to the candidate's stated level and do not inflate scores. Base every judgment on what the candidate actually said or wrote. Hints used on a technical question should lower its scores somewhat; hints escalate (1 = gentle nudge, 2 = points to the technique, 3 = gives the key idea), so later hints should lower correctness and approach more. Recovering well after a gentle nudge is still a reasonable showing.`;
+Scoring scale (integers only): 1 = poor or no real answer, 2 = weak, 3 = adequate, 4 = strong, 5 = exceptional. Be calibrated to the candidate's stated level and do not inflate scores. Base every judgment on what the candidate actually said or wrote. Hints used on a technical question should lower its scores somewhat; hints escalate (1 = gentle nudge, 2 = points to the technique, 3 = gives the key idea), so later hints should lower correctness and approach more. Recovering well after a gentle nudge is still a reasonable showing.
+Filler counts are optional and may still be processing separately. When filler measurements are absent, do not estimate filler frequency or give filler-frequency coaching from the cleaned transcript.`;
 
 function formatDuration(seconds) {
   if (!seconds) return 'not recorded';
@@ -282,7 +283,7 @@ const DELIVERY_GUIDE = `Delivery measurements: some answers include nonverbal me
 - Rising endings: when pitch rises at the end of many statements (roughly a third or more of phrases), assertions can sound like questions (uptalk). Trailing off: when volume fades at the end of many phrases, key words get lost.
 - Think-aloud (coding questions): interviewers want to hear the reasoning. Silent stretches of 15 s or more are worth flagging; silence while typing code means they stopped narrating, silence without typing suggests they were stuck without saying so. Recommend narrating intent before and while coding.
 - Filler words above about 3% of words are noticeable.
-- Smiles (especially when greeting, at the start of an answer, and when describing good outcomes) and occasional nods come across as friendly and engaged. Frequent looking away can read as distracted.
+- Smiles and occasional nods can come across as friendly and engaged, for example a smile when greeting or when describing a good outcome. Treat smiling as something for the candidate to notice, not a target: people smile differently, there is no correct amount, and never tell them to smile more. Mention it only when it connects to a specific moment in their answer. Frequent looking away can read as distracted.
 - Side-to-side movement (shoulders shifting sideways from the candidate's usual position) for roughly a third of the time or more can look restless on video; it is movement, not nervousness, and moving the camera or chair also counts. Gesturing is the share of time both hands were visible and moving: natural gestures while explaining are fine and more is not automatically better, so only mention it when it is near zero across long spoken answers or nearly constant.
 - Hedging (from the transcript, not measured): phrases like "I just", "I guess", "sort of", "kind of", "I think maybe", or "I might be wrong" undersell the candidate's own work; quote one if it is a pattern.
 Rules: never infer emotions, confidence, honesty, or personality from these numbers, and never comment on appearance. Cite the specific measurement you are reacting to. Where it fits, connect it to the content (for example, rushing through the Result part). If a measurement is missing, do not guess it.`;

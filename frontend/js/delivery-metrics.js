@@ -279,7 +279,7 @@ export function detectPitch(samples, sampleRate, { minHz = MIN_PITCH_HZ, maxHz =
 export function findSpeech(frames, { silenceDb = -25, floorDb = -60, minSilence = 0.5, minSound = 0.5 } = {}) {
   const valid = (frames ?? []).filter((f) => Number.isFinite(f.db) && Number.isFinite(f.t));
   if (valid.length < 4) return null;
-  const maxDb = Math.max(...valid.map((f) => f.db));
+  const maxDb = valid.reduce((max, f) => Math.max(max, f.db), -Infinity);
   if (maxDb < floorDb + 6) return null;
   const threshold = Math.max(maxDb + silenceDb, floorDb);
   const step = median(valid.slice(1).map((f, i) => f.t - valid[i].t)) || 0.05;
@@ -306,6 +306,35 @@ export function findSpeech(frames, { silenceDb = -25, floorDb = -60, minSilence 
   return { threshold, maxDb, sounding, firstSound: sounding[0].start, lastSound: sounding.at(-1).end };
 }
 
+export const TRACK_FLOOR_DB = -60; // quieter seconds are drawn at the floor
+const TRACK_MIN_VOICED = 2; // voiced frames needed in a second to plot its pitch
+
+/**
+ * One point per second for the report's loudness and pitch lanes, from answer
+ * audio frames ({ t, db, f0 }). Loudness is mean dB relative to the loudest
+ * second (0 = loudest); pitch is the second's median in semitones relative to
+ * the session's median pitch, so different voices are comparable.
+ */
+export function voiceTracks(frames) {
+  const buckets = new Map();
+  for (const f of frames ?? []) {
+    const sec = Math.floor(f.t);
+    const b = buckets.get(sec) ?? { db: [], f0: [] };
+    b.db.push(Math.max(TRACK_FLOOR_DB, f.db));
+    if (Number.isFinite(f.f0)) b.f0.push(f.f0);
+    buckets.set(sec, b);
+  }
+  const secs = [...buckets.keys()].sort((a, b) => a - b);
+  const loud = secs.map((t) => ({ t, db: mean(buckets.get(t).db) }));
+  const top = loud.length ? loud.reduce((max, p) => Math.max(max, p.db), -Infinity) : 0;
+  const voiced = secs.filter((t) => buckets.get(t).f0.length >= TRACK_MIN_VOICED);
+  const ref = voiced.length ? median(voiced.flatMap((t) => buckets.get(t).f0)) : null;
+  return {
+    loudness: loud.map((p) => ({ t: p.t, v: round(Math.max(TRACK_FLOOR_DB, p.db - top), 1) })),
+    pitch: voiced.map((t) => ({ t, v: round(12 * Math.log2(median(buckets.get(t).f0) / ref), 1) })),
+  };
+}
+
 export const UPTALK_SEMITONES = 2.5; // phrase ending this much above the phrase's median pitch
 export const TRAIL_OFF_DB = 6; // phrase ending this much quieter than the rest of the phrase
 export const SILENT_STRETCH_S = 15; // think-aloud: silence this long while solving is flagged
@@ -315,13 +344,18 @@ const ENDING_LOUD_S = 0.5; // the "ending" of a phrase for loudness
 
 /**
  * Phrase endings: rising pitch (possible uptalk) and fading loudness (trailing
- * off). Phrases are the sounding intervals between pauses of 0.5 s or more.
+ * off). Frames and non-overlapping sounding intervals are in chronological order.
+ * Phrases are the sounding intervals between pauses of 0.5 s or more.
  */
 export function phraseEndings(frames, sounding) {
   const out = { pitchPhrases: 0, uptalk: 0, loudPhrases: 0, trailOff: 0 };
+  let cursor = 0;
   for (const r of sounding ?? []) {
     if (r.end - r.start < PHRASE_MIN_S) continue;
-    const inPhrase = frames.filter((f) => f.t >= r.start && f.t < r.end);
+    while (cursor < frames.length && frames[cursor].t < r.start) cursor++;
+    const start = cursor;
+    while (cursor < frames.length && frames[cursor].t < r.end) cursor++;
+    const inPhrase = frames.slice(start, cursor);
     const voiced = inPhrase.filter((f) => Number.isFinite(f.f0));
     if (voiced.length >= 9) {
       const ref = median(voiced.map((f) => f.f0));
@@ -360,7 +394,7 @@ export function silentStretches(speech, startT, endT, typing = []) {
   }
   const long = quiet.filter(([a, b]) => b - a >= SILENT_STRETCH_S);
   return {
-    longestSilence: Math.max(0, ...quiet.map(([a, b]) => b - a)),
+    longestSilence: quiet.reduce((max, [a, b]) => Math.max(max, b - a), 0),
     silentStretches: long.length,
     silentCoding: long.filter(([a, b]) => typing.filter((t) => t >= a && t <= b).length >= 5).length,
   };
@@ -381,8 +415,11 @@ export function summarizeAudio(frames, { spokenText = '', typing = [], thinkAlou
   const span = speech.lastSound - speech.firstSound;
   const soundTime = sum(speech.sounding.map((r) => r.end - r.start));
   const gaps = speech.sounding.slice(1).map((r, i) => r.start - speech.sounding[i].end);
-  const inSound = (t) => speech.sounding.some((r) => t >= r.start && t < r.end);
-  const voiced = frames.filter((f) => inSound(f.t));
+  let interval = 0;
+  const voiced = frames.filter((f) => {
+    while (interval < speech.sounding.length && f.t >= speech.sounding[interval].end) interval++;
+    return interval < speech.sounding.length && f.t >= speech.sounding[interval].start;
+  });
   const f0 = voiced.map((f) => f.f0).filter(Number.isFinite);
   const loud = voiced.map((f) => f.db).filter(Number.isFinite);
   const words = countWords(spokenText);

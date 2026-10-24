@@ -54,15 +54,6 @@
           </fieldset>
 
           <fieldset class="field">
-            <legend>Length (main questions per round)</legend>
-            <div class="segmented">
-              <label><input type="radio" name="length" value="short" /> Short · 3</label>
-              <label><input type="radio" name="length" value="standard" checked /> Standard · 5</label>
-              <label><input type="radio" name="length" value="long" /> Long · 8</label>
-            </div>
-          </fieldset>
-
-          <fieldset class="field">
             <legend>Model</legend>
             <div class="segmented">
               <label><input type="radio" name="model" value="gemma-4-26b-a4b-it" checked /> Gemma 4 26B A4B <em class="muted">(faster, more reliable)</em></label>
@@ -174,9 +165,9 @@
           <button id="new-btn" class="btn primary" type="button">New interview</button>
         </div>
       </div>
-      <div id="report-loading" class="card loading" hidden>
+      <div id="report-loading" class="card loading" role="status" aria-live="polite" hidden>
         <div class="spinner" aria-hidden="true"></div>
-        <p>Reviewing your interview carefully… this can take up to a minute.</p>
+        <p>AI feedback is loading. Your available delivery measurements and answers are below.</p>
       </div>
       <div id="report-error" class="notice error" hidden></div>
       <div id="report"></div>

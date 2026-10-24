@@ -366,6 +366,7 @@ details summary { cursor: pointer; color: var(--accent); margin: 6px 0; font-siz
 .tl-mark { stroke: var(--muted); stroke-width: 1; opacity: 0.55; }
 .tl-label, .tl-axis { fill: var(--muted); font-size: 10px; font-family: inherit; }
 .tl-label { font-weight: 600; }
+.tl-lane { fill: var(--text); font-size: 11px; font-weight: 600; font-family: inherit; }
 
 @media (max-width: 600px) {
   /* The camera is pinned on screen, so keep it compact on phones. */

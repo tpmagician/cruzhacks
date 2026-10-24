@@ -64,8 +64,8 @@ lacked: understanding the content of your answers and tying delivery to it.
 
 Gemma also gets guidance to flag hedging language ("I just", "sort of", "I guess") from the transcript.
 
-The report adds a **Delivery** section (metrics, a smile timeline across the whole
-interview with markers per question, and Gemma's delivery coaching) and a short
+The report adds a **Delivery** section (metrics, smile, loudness, and pitch tracks
+on one time axis with markers per question, and Gemma's delivery coaching) and a short
 delivery note per question. These are approximate coaching signals, not validated
 measures of skill, emotion, or confidence. Pure measurement code lives in
 `frontend/js/delivery-metrics.js` (shared with the server and tested with
@@ -149,15 +149,36 @@ The structure lives in a JavaScript state machine (`frontend/js/interview.js`), 
 
 | Use | Model | Thinking level |
 | --- | --- | --- |
-| Live interviewer turns | `gemma-4-26b-a4b-it` (default) or `gemma-4-31b-it` (falls back to 26B on server errors) | `minimal` |
+| Live interviewer turns, including presenting a coding or SQL problem | `gemma-4-26b-a4b-it` (default) or `gemma-4-31b-it` (falls back to 26B on server errors) | `minimal` |
 | Turns where you submit code | same | `high` |
-| End-of-interview evaluation | same | `high` |
+| End-of-interview evaluation | same | `minimal` |
+
+High thinking was too slow for two of these. Measured on 26B: presenting a
+coding problem took 80 s with `high` (7.5 s with `minimal`), and evaluating two
+questions took over 150 s (19 s). Interviewer turns have 30 s per attempt and 60 s
+in total; evaluation has 60 s per attempt, 90 s per generation, and 95 s for the
+route including one JSON repair. Every interview has 4 main questions (2 behavioral
++ 2 technical, or 4 in a single round); its evaluation measured about 30 s.
 
 Conversation history goes to the model as multi-turn `contents`, with `user` for the candidate and `model` for the interviewer. The persona goes in `config.systemInstruction`. If a model ever rejects system instructions or the thinking config, `gemini.js` retries with that feature adapted.
 
 ### Evaluation
 
 `POST /api/evaluate` asks for strict JSON. The server strips code fences and pulls out the JSON object. If the JSON is invalid, it asks the model again once. If that also fails, it returns `{ ok: false, error: "unable_to_score" }`, and the report shows "unable to score" instead of crashing. Missing or out-of-range scores also show as "unable to score".
+
+The report shows local delivery metrics, tracks, and your answers immediately.
+AI scores and coaching load independently; filler transcription continues in the
+background and updates labeled counts without rescoring or resetting the report.
+Unavailable transcription keeps dictation estimates. Filler numbers are omitted
+from the AI snapshot so later counts cannot contradict its advice.
+
+API work has a 60-second server budget (including evaluation JSON repair), with
+30-second model attempts and at most one transient retry per model. The browser
+allows 65 seconds for a structured server response. New interviews and page exit
+cancel outstanding requests; late responses cannot update another session.
+AI failure keeps the local report available and offers **Try scoring again**.
+See the [report performance plan](docs/report-performance-plan.md) for the audit,
+implementation status, and remaining CPU/memory improvements.
 
 ### API
 
