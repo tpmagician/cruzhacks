@@ -110,8 +110,7 @@ try {
   // storage unavailable
 }
 els.themeToggle.addEventListener('click', () => {
-  const current = document.documentElement.dataset.theme
-    ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const current = document.documentElement.dataset.theme ?? 'dark';
   const next = current === 'dark' ? 'light' : 'dark';
   applyTheme(next);
   try {
