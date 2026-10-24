@@ -56,7 +56,7 @@ The structure lives in a JavaScript state machine (`frontend/js/interview.js`), 
 
 | Use | Model | Thinking level |
 | --- | --- | --- |
-| Live interviewer turns | `gemma-4-31b-it` (default) or `gemma-4-26b-a4b-it` | `minimal` |
+| Live interviewer turns | `gemma-4-26b-a4b-it` (default) or `gemma-4-31b-it` (falls back to 26B on server errors) | `minimal` |
 | Turns where you submit code | same | `high` |
 | End-of-interview evaluation | same | `high` |
 
