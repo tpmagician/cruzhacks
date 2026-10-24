@@ -2,8 +2,6 @@
 // worker, the server prompt builder, and the tests. No DOM access in this file.
 //
 // Methods follow MACH (Hoque et al., UbiComp 2013) where the paper specifies them:
-// - Head nods/shakes: the paper's stable/extreme/transient frame states over a
-//   ±2-frame window on the "between the eyes" point, with a 2-pixel threshold.
 // - Pauses: minimum pitch 100 Hz, silence threshold -25 dB (relative to the loudest
 //   frame, as in Praat), minimum silent and sounding intervals of 0.5 s.
 // - Pitch: autocorrelation-based periodicity detection.
@@ -21,8 +19,6 @@ export const AWAY_DEGREES = 20; // head turned this far from the usual position 
 export const MIN_PITCH_HZ = 100;
 export const MAX_PITCH_HZ = 500;
 
-const REF_EYE_PX = 60; // MACH's 2 px rule is applied to a face rescaled to 60 px between outer eye corners
-const MAX_SWING_PX = 40; // larger swings are posture changes (e.g. looking down at notes), not nods
 const MIN_FRAMES = 20; // about 1.3 s of face tracking before a face statistic is reported
 const MIN_BODY_SECONDS = 5; // usable body tracking before a movement or gesture share is reported
 
@@ -80,82 +76,6 @@ export function measureFace(face, width, height) {
   return { smile, x: between.x * width, y: between.y * height, eye, yaw, pitch };
 }
 
-/**
- * MACH head nod (y axis) and shake (x axis) detection.
- * @param {{t: number, face: {x: number, y: number, eye: number} | null}[]} frames
- * @returns {{nods: object[], shakes: object[]}}
- */
-export function detectHeadGestures(frames, { stablePx = 2, maxGap = 0.3 } = {}) {
-  const result = { nods: [], shakes: [] };
-  const runs = [];
-  let run = [];
-  for (const f of frames ?? []) {
-    const ok = f?.face && Number.isFinite(f.face.x) && Number.isFinite(f.face.y) && f.face.eye > 0;
-    if (!ok || (run.length && f.t - run.at(-1).t > maxGap)) {
-      if (run.length) runs.push(run);
-      run = [];
-    }
-    if (ok) run.push(f);
-  }
-  if (run.length) runs.push(run);
-  for (const r of runs) {
-    result.shakes.push(...gesturesOnAxis(r, 'x', stablePx));
-    result.nods.push(...gesturesOnAxis(r, 'y', stablePx));
-  }
-  return result;
-}
-
-function gesturesOnAxis(run, axis, stablePx) {
-  const n = run.length;
-  if (n < 5) return [];
-  const scale = REF_EYE_PX / median(run.map((f) => f.face.eye));
-  const pos = run.map((f) => f.face[axis] * scale);
-
-  const states = new Array(n).fill(null);
-  for (let i = 2; i < n - 2; i++) {
-    const w = pos.slice(i - 2, i + 3);
-    const max = Math.max(...w);
-    const min = Math.min(...w);
-    if (max - min <= stablePx) states[i] = 'stable';
-    else if (pos[i] === max) states[i] = 'max';
-    else if (pos[i] === min) states[i] = 'min';
-    else states[i] = 'transient';
-  }
-
-  const events = [];
-  let seenStable = false;
-  let extremes = [];
-  let start = null;
-  for (let i = 2; i < n - 2; i++) {
-    const s = states[i];
-    if (s === 'stable') {
-      // More than two extremes between two stable states, each adjacent pair at
-      // least stablePx apart, is one nod or shake.
-      if (seenStable && extremes.length > 2 && extremes.every((e, k) => {
-        if (k === 0) return true;
-        const swing = Math.abs(e.v - extremes[k - 1].v);
-        return swing >= stablePx && swing <= MAX_SWING_PX;
-      })) {
-        events.push({ start, end: run[i].t, swings: extremes.length });
-      }
-      seenStable = true;
-      extremes = [];
-      start = null;
-      continue;
-    }
-    start ??= run[i].t;
-    if (s === 'max' || s === 'min') {
-      const last = extremes.at(-1);
-      if (last?.type === s) {
-        if ((s === 'max' && pos[i] > last.v) || (s === 'min' && pos[i] < last.v)) last.v = pos[i];
-      } else {
-        extremes.push({ type: s, v: pos[i] });
-      }
-    }
-  }
-  return events;
-}
-
 /** Face statistics for one stretch of frames. `baseline` is the usual {yaw, pitch}. */
 export function summarizeFace(frames, baseline = null) {
   if (!frames?.length) return null;
@@ -164,7 +84,6 @@ export function summarizeFace(frames, baseline = null) {
   const heads = baseline
     ? tracked.filter((f) => Number.isFinite(f.face.yaw) && Number.isFinite(f.face.pitch))
     : [];
-  const g = detectHeadGestures(frames);
   return {
     frames: frames.length,
     tracked: tracked.length,
@@ -172,8 +91,6 @@ export function summarizeFace(frames, baseline = null) {
     smileFrames: smiles.length,
     smileMean: smiles.length ? mean(smiles) : null,
     smileShare: smiles.length ? smiles.filter((s) => s >= SMILE_THRESHOLD).length / smiles.length : null,
-    nods: g.nods.length,
-    shakes: g.shakes.length,
     headFrames: heads.length,
     awayShare: heads.length
       ? heads.filter((f) => Math.abs(angleDelta(f.face.yaw, baseline.yaw)) > AWAY_DEGREES
@@ -555,8 +472,6 @@ export function combineDeliveries(parts) {
     faceCoverage: faceFrames ? round(sum(face.map((f) => f.tracked)) / faceFrames, 2) : null,
     smileMean: hasFace && smileFrames >= MIN_FRAMES ? round(weighted(smileParts, (f) => f.smileMean, (f) => f.smileFrames)) : null,
     smileShare: hasFace && smileFrames >= MIN_FRAMES ? round(weighted(smileParts, (f) => f.smileShare, (f) => f.smileFrames), 2) : null,
-    nods: hasFace ? sum(face.map((f) => f.nods)) : null,
-    shakes: hasFace ? sum(face.map((f) => f.shakes)) : null,
     awayShare: hasFace && headFrames >= MIN_FRAMES ? round(weighted(headParts, (f) => f.awayShare, (f) => f.headFrames), 2) : null,
     shiftShare: shiftValid >= MIN_BODY_SECONDS ? round(sum(body.map((b) => b.shiftFlagged)) / shiftValid, 2) : null,
     gestureShare: gestureValid >= MIN_BODY_SECONDS ? round(sum(body.map((b) => b.gestureFlagged)) / gestureValid, 2) : null,
@@ -594,7 +509,6 @@ export function describeDelivery(d) {
     out.push(`${plural(d.fillers, 'filler word')} in ${d.words} words (${(d.fillerShare * 100).toFixed(1)}%)${d.fillers ? `: ${fillerList(d.fillerWords)}` : ''}`);
   }
   if (d.smileShare != null) out.push(`smiling ${pct(d.smileShare)} of the time (mean smile intensity ${d.smileMean}/100)`);
-  if (d.nods != null) out.push(`${plural(d.nods, 'head nod')} and ${plural(d.shakes, 'head shake')} while answering`);
   if (d.awayShare != null) out.push(`head turned away from their usual position ${pct(d.awayShare)} of the time`);
   if (d.shiftShare != null) out.push(`shifted sideways from their usual position ${pct(d.shiftShare)} of the time (swaying, leaning, or moving in the seat)`);
   if (d.gestureShare != null) out.push(`hands moving (gesturing) ${pct(d.gestureShare)} of the time both hands were visible`);
@@ -618,7 +532,6 @@ export function deliveryChips(d) {
   if (d.pitchVarSt != null) chips.push({ label: 'Pitch variation', value: `${d.pitchVarSt} st` });
   if (d.fillerShare != null) chips.push({ label: 'Fillers', value: `${d.fillers} (${(d.fillerShare * 100).toFixed(1)}%)` });
   if (d.smileShare != null) chips.push({ label: 'Smiling', value: pct(d.smileShare) });
-  if (d.nods != null) chips.push({ label: 'Nods / shakes', value: `${d.nods} / ${d.shakes}` });
   if (d.awayShare != null) chips.push({ label: 'Looking away', value: pct(d.awayShare) });
   if (d.shiftShare != null) chips.push({ label: 'Side-to-side', value: pct(d.shiftShare) });
   if (d.gestureShare != null) chips.push({ label: 'Gesturing', value: pct(d.gestureShare) });

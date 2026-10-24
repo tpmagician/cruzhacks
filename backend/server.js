@@ -112,7 +112,7 @@ const DELIVERY_RANGES = {
   answers: [0, 50], spokenSeconds: [0, 7200], latency: [0, 600], wpm: [0, 400], pauseShare: [0, 1],
   pauses: [0, 5000], longPauses: [0, 5000], pitchHz: [50, 600], pitchVarSt: [0, 24], loudVarDb: [0, 60],
   words: [0, 100000], fillers: [0, 10000], fillerShare: [0, 1], faceCoverage: [0, 1], smileMean: [0, 100],
-  smileShare: [0, 1], nods: [0, 1000], shakes: [0, 1000], awayShare: [0, 1],
+  smileShare: [0, 1], awayShare: [0, 1],
   articulationWpm: [0, 500], pitchPhrases: [0, 5000], uptalk: [0, 5000], uptalkShare: [0, 1],
   loudPhrases: [0, 5000], trailOff: [0, 5000], trailShare: [0, 1],
   longestSilence: [0, 7200], silentStretches: [0, 1000], silentCoding: [0, 1000],
@@ -138,9 +138,6 @@ function cleanSessionDelivery(d) {
   if (!d || typeof d !== 'object') return null;
   return {
     overall: cleanDelivery(d.overall),
-    listeningNods: num(d.listeningNods, [0, 1000]),
-    listeningShakes: num(d.listeningShakes, [0, 1000]),
-    listeningSeconds: num(d.listeningSeconds, [0, 24 * 3600]),
   };
 }
 

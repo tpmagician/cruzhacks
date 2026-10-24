@@ -50,11 +50,10 @@ lacked: understanding the content of your answers and tying delivery to it.
 | Signal | How it is measured | Source |
 | --- | --- | --- |
 | Smiles | MediaPipe `mouthSmileLeft/Right` blendshapes, 0–100; "smiling" at 35+ | MACH used SHORE (0–100) |
-| Head nods / shakes | Stable/extreme/transient states over ±2 frames on the between-the-eyes point, 2 px rule (rescaled to face size), more than two extremes between stable states | MACH algorithm |
 | Pauses | -25 dB silence threshold relative to the loudest frame, 0.5 s minimum silent and sounding intervals | MACH (Praat settings) |
 | Pitch variation | Autocorrelation pitch (100–500 Hz), standard deviation in semitones | MACH (autocorrelation) |
 | Pace, fillers | Words per minute from the dictated transcript; filler words as a share of words, counted from the word-for-word transcript when it is available (otherwise from dictation, which undercounts "um"/"uh") | MACH "weak language" |
-| Looking away, time to first word, nods while listening | Head direction vs. your median position; silence before speech; nods outside your answers | Added |
+| Looking away, time to first word | Head direction vs. your median position; silence before speech | Added |
 | Talking speed | Words per minute of actual sound, pauses excluded (articulation rate) | Speeko-style |
 | Rising endings (uptalk) | Last 0.4 s of a phrase (≥1 s long) is 2.5+ semitones above the rest of the phrase; octave jumps ignored | Speeko-style |
 | Trailing off | Last 0.5 s of a phrase is 6+ dB quieter than the rest | Speeko-style |
@@ -95,8 +94,8 @@ your median position over the interview.
 
 Frames are analyzed in a dedicated worker (`delivery-worker.js`), up to 15 frames
 per second at 640 pixels wide with one frame in flight. The face model runs on
-every frame and the pose model on every other frame, so nod detection keeps its
-frame rate. Only derived measurements leave the worker; video is never recorded,
+every frame and the pose model on every other frame to keep the CPU load down.
+MACH's head nod and shake counts are not measured; they were removed from the app. Only derived measurements leave the worker; video is never recorded,
 uploaded, or stored. The preview is mirrored; analysis uses the original
 orientation.
 
@@ -157,8 +156,10 @@ High thinking was too slow for two of these. Measured on 26B: presenting a
 coding problem took 80 s with `high` (7.5 s with `minimal`), and evaluating two
 questions took over 150 s (19 s). Interviewer turns have 30 s per attempt and 60 s
 in total; evaluation has 60 s per attempt, 90 s per generation, and 95 s for the
-route including one JSON repair. Every interview has 4 main questions (2 behavioral
-+ 2 technical, or 4 in a single round); its evaluation measured about 30 s.
+route including one JSON repair. Every interview has one main question per round
+(1 behavioral + 1 technical, or 1 in a single round); for engineering and analyst
+roles the technical question is the coding or SQL problem. A two-question
+evaluation measured about 19 s.
 
 Conversation history goes to the model as multi-turn `contents`, with `user` for the candidate and `model` for the interviewer. The persona goes in `config.systemInstruction`. If a model ever rejects system instructions or the thinking config, `gemini.js` retries with that feature adapted.
 

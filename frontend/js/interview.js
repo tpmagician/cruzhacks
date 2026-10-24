@@ -9,8 +9,9 @@ import { combineDeliveries } from './delivery-metrics.js';
 import { hintsLeftToday, useHint } from './hints.js';
 import { pickProblems } from './problems.js';
 
-// Fixed for demo-length interviews (and a ~30 s evaluation): 2 + 2 with both rounds, 4 with one.
-export const QUESTIONS_PER_INTERVIEW = 4;
+// Fixed for demo-length interviews: one main question per round (1 + 1 with both rounds).
+// For engineering and analyst roles the technical question is the coding or SQL problem.
+export const QUESTIONS_PER_ROUND = 1;
 export const MAX_FOLLOWUPS = 2;
 
 const OPENING_CUE = '(The candidate has joined the video call and is ready to begin.)';
@@ -147,7 +148,7 @@ function buildPlans(setup) {
   if (setup.retry?.length) {
     for (const item of setup.retry) (plans[item.round] ??= []).push({ ...item });
   } else {
-    const n = QUESTIONS_PER_INTERVIEW / setup.rounds.length;
+    const n = QUESTIONS_PER_ROUND;
     if (setup.rounds.includes('behavioral')) plans.behavioral = behavioralPlan(n);
     if (setup.rounds.includes('technical')) plans.technical = technicalPlan(roleCategory(setup.role), n, setup.level);
   }
@@ -444,8 +445,7 @@ export class InterviewSession {
     return this.records.filter((r) => r.turns.some((t) => t.speaker === 'candidate'));
   }
 
-  /** @param {object|null} sessionDelivery DeliveryTracker.sessionSummary(), when delivery coaching was on */
-  evaluationPayload(sessionDelivery = null, { includeFillers = true } = {}) {
+  evaluationPayload({ includeFillers = true } = {}) {
     const { role, level, companyType, model } = this.setup;
     const answered = this.answeredRecords();
     const summarize = (parts) => {
@@ -462,14 +462,7 @@ export class InterviewSession {
       records: answered.map(({ id, round, type, topic, turns, code, hintsUsed, seconds, deliveries }) => ({
         id, round, type, topic, turns, code, hintsUsed, seconds, delivery: summarize(deliveries),
       })),
-      delivery: overall || sessionDelivery
-        ? {
-          overall,
-          listeningNods: sessionDelivery?.listeningNods ?? null,
-          listeningShakes: sessionDelivery?.listeningShakes ?? null,
-          listeningSeconds: sessionDelivery?.listeningSeconds ?? null,
-        }
-        : null,
+      delivery: overall ? { overall } : null,
     };
   }
 

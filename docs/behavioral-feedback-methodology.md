@@ -215,9 +215,8 @@ The running app already has a delivery-measurement path that predates milestones
 | Metric | Built calculation | Origin |
 | --- | --- | --- |
 | Smiles | Mean of MediaPipe `mouthSmileLeft/Right` × 100; smiling at ≥35; needs ≥20 tracked frames | MACH used the SHORE classifier |
-| Head nods and shakes | MACH stable/extreme/transient states over ±2 frames on the between-the-eyes point, 2 px rule after rescaling the face to 60 px between outer eye corners; swings over 40 px ignored as posture changes; more than two extremes between stable states | MACH |
+| Head nods and shakes | Removed from the app (October 2026); no longer measured or reported | MACH |
 | Looking away | Head yaw or pitch more than 20° from the session's median head direction | Added |
-| Nods while listening | Nods and shakes outside answer windows, reported when the face was visible ≥10 s while listening | Added |
 
 ### Divergences from this specification
 

@@ -99,7 +99,7 @@ test('AI and transcription updates write only owned slots, preserving charts and
   assert.equal(question.attributes['aria-busy'], 'false');
   const ai = question.innerHTML;
   part.fillers.count = 2; part.fillerSource = 'verbatim'; part.transcriptionStatus = 'ready';
-  updateReportDelivery(el, session, null);
+  updateReportDelivery(el, session);
   assert.match(local.innerHTML, /2 \(16.7%\)/);
   assert.match(overall.innerHTML, /completed verbatim transcripts/);
   assert.equal(question.innerHTML, ai);

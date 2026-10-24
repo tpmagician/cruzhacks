@@ -234,7 +234,7 @@ exercise the real Express/provider retry paths.
   two questions), so there was no working baseline to compare against. Measured
   end to end with minimal thinking on 26B: 2 questions 18.9 s, 4 questions 29.6 s,
   5 questions 34.6 s, 8 questions 45.8 s, all scored. Interviews are now fixed at
-  4 main questions. A side-by-side quality comparison can still be run offline
+  one main question per round (2 with both rounds). A side-by-side quality comparison can still be run offline
   without deadlines.
 - Benchmark lower thinking separately on a fixed set of behavioral and code
   answers before adopting it. Do not assume that reducing thinking preserves

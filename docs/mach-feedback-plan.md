@@ -1,7 +1,7 @@
 # MACH feedback-side implementation plan
 
 The sensing side of MACH (Hoque et al., UbiComp 2013) is built: smile intensity,
-nods and shakes with MACH's algorithm, Praat-style pauses, pitch, pace, and filler
+Praat-style pauses, pitch, pace, and filler
 words, plus extras MACH never measured. What is missing is the feedback side. In
 the paper, only the group that got video replay *plus* feedback improved; video
 alone did not help. This plan closes that gap, in build order.
@@ -11,7 +11,7 @@ Checked against `back` at `db366f8`. Status of the earlier review's items:
 | Item | Status |
 |---|---|
 | Smile track 0–100 with question markers | Built (`smileBuckets` → `smileTimeline()`) |
-| Nods/shakes, MACH algorithm, 15 fps | Built (`detectHeadGestures`, landmark 168) |
+| Nods/shakes, MACH algorithm | Built, then removed from the app |
 | Interviewer voice | Built (`Speaker` in `voice.js`) |
 | MediaPipe and models served locally | Built (`npm run setup:models`, no CDN) |
 | Pitch and loudness tracks | Built in Phase 1 |

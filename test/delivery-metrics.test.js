@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  detectHeadGestures, detectPitch, findSpeech, summarizeAudio, summarizeFace, countFillers,
+  detectPitch, findSpeech, summarizeAudio, summarizeFace, countFillers,
   countWords, combineDeliveries, describeDelivery, deliveryChips, measureFace, rmsDb, headBaseline,
   summarizeBody, bodyBaseline, voiceTracks, phraseEndings,
 } from '../frontend/js/delivery-metrics.js';
@@ -9,54 +9,6 @@ import { renderReport } from '../frontend/js/report.js';
 
 const FPS = 15;
 const face = (x, y, extra = {}) => ({ smile: 10, x, y, eye: 60, yaw: 0, pitch: 0, ...extra });
-
-/** Still for `still` s, then `cycles` oscillations on one axis, then still again. */
-function headTrack({ axis = 'y', amp = 8, hz = 2, cycles = 2, still = 1 }) {
-  const frames = [];
-  const moving = cycles / hz;
-  const total = still * 2 + moving;
-  for (let i = 0; i <= total * FPS; i++) {
-    const t = i / FPS;
-    const m = t > still && t < still + moving ? amp * Math.sin(2 * Math.PI * hz * (t - still)) : 0;
-    frames.push({ t, face: face(320 + (axis === 'x' ? m : 0), 240 + (axis === 'y' ? m : 0)) });
-  }
-  return frames;
-}
-
-test('repeated vertical head movement is a nod, not a shake', () => {
-  const g = detectHeadGestures(headTrack({ axis: 'y' }));
-  assert.equal(g.nods.length, 1);
-  assert.equal(g.shakes.length, 0);
-});
-
-test('repeated horizontal head movement is a shake', () => {
-  const g = detectHeadGestures(headTrack({ axis: 'x' }));
-  assert.equal(g.shakes.length, 1);
-  assert.equal(g.nods.length, 0);
-});
-
-test('a single head turn that settles is not a shake (MACH stable-state rule)', () => {
-  const frames = [];
-  for (let i = 0; i <= 3 * FPS; i++) {
-    const t = i / FPS;
-    const x = 320 + Math.min(30, Math.max(0, (t - 1) * 60)); // turns over 0.5 s, then holds
-    frames.push({ t, face: face(x, 240) });
-  }
-  const g = detectHeadGestures(frames);
-  assert.equal(g.shakes.length, 0);
-  assert.equal(g.nods.length, 0);
-});
-
-test('sub-threshold jitter and big posture swings are ignored', () => {
-  assert.equal(detectHeadGestures(headTrack({ axis: 'y', amp: 0.8 })).nods.length, 0);
-  assert.equal(detectHeadGestures(headTrack({ axis: 'y', amp: 40, hz: 1 })).nods.length, 0);
-});
-
-test('missing face frames split the track instead of counting as movement', () => {
-  const frames = headTrack({ axis: 'y' }).map((f, i) => (i % 3 === 0 ? { t: f.t, face: null } : f));
-  assert.doesNotThrow(() => detectHeadGestures(frames));
-  assert.equal(detectHeadGestures(frames).nods.length, 0);
-});
 
 test('measureFace reads smile blendshapes and the between-eyes point', () => {
   const lm = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5 }));
@@ -211,7 +163,6 @@ test('combineDeliveries merges answers and describeDelivery explains them', () =
   assert.equal(d.fillers, 2);
   assert.equal(d.fillerShare, 0.05);
   assert.equal(d.smileShare, 1);
-  assert.equal(d.nods, 0);
   const lines = describeDelivery(d).join('\n');
   assert.match(lines, /132 words per minute/);
   assert.match(lines, /"um" ×1/);
@@ -221,7 +172,6 @@ test('combineDeliveries merges answers and describeDelivery explains them', () =
   const typed = combineDeliveries([{ audio: null, face: null, fillers: { count: 0, byWord: {} }, words: 40 }]);
   assert.equal(typed.wpm, null);
   assert.equal(typed.smileShare, null);
-  assert.equal(typed.nods, null);
 });
 
 // Pose runs on every other camera frame; the rest carry body: null.

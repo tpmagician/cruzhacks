@@ -75,7 +75,7 @@ const reports = new ReportController({
   evaluate: (payload, options) => api.evaluate(payload, options),
   view: {
     mount: (current, delivery) => renderReport(els.report, current, { pending: true }, delivery),
-    delivery: (current, delivery) => updateReportDelivery(els.report, current, delivery),
+    delivery: (current) => updateReportDelivery(els.report, current),
     loading: () => {
       lastReport = null;
       els.reportError.hidden = true;

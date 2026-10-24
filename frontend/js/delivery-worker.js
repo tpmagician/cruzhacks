@@ -1,7 +1,7 @@
 /* global Vision */
-// Camera tracking for interview delivery coaching: the face (smiles, nods, head
+// Camera tracking for interview delivery coaching: the face (smiles, head
 // direction) on every frame, and body pose (side-to-side movement, gestures) on
-// every other frame so the face keeps enough frames for nod detection.
+// every other frame to keep the CPU load down.
 // A classic worker supports MediaPipe's WASM loader (which uses importScripts).
 let face;
 let pose;

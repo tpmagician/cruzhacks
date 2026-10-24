@@ -105,11 +105,8 @@ function chipsHtml(chips) {
     : '';
 }
 
-function localDeliveryHtml(parts, listening = null) {
+function localDeliveryHtml(parts) {
   const chips = deliveryChips(combineDeliveries(parts));
-  if (listening?.listeningNods != null && listening.listeningSeconds >= 10) {
-    chips.push({ label: 'Nods while listening', value: String(listening.listeningNods) });
-  }
   const speech = (parts ?? []).filter((p) => p?.fillerSource && p.fillerSource !== 'typed');
   const pending = speech.filter((p) => p.transcriptionStatus === 'pending').length;
   const estimated = speech.filter((p) => p.fillerSource === 'dictation').length;
@@ -213,7 +210,7 @@ function deliverySectionHtml(records, report, sessionDelivery) {
   return `<section class="card delivery">
     <h2>Delivery</h2>
     <p class="muted small">Measured on your device from your camera and microphone, following the MACH interview-coaching method (Hoque et al., 2013). These are approximate signals, not a score.</p>
-    <div data-local-delivery="overall">${localDeliveryHtml(parts, sessionDelivery)}</div>
+    <div data-local-delivery="overall">${localDeliveryHtml(parts)}</div>
     ${timeline}
     <div data-ai-delivery>${deliveryCoachingHtml(report)}</div>
   </section>`;
@@ -301,12 +298,12 @@ export function updateReportAI(el, session, result) {
   }
 }
 
-export function updateReportDelivery(el, session, sessionDelivery) {
+export function updateReportDelivery(el, session) {
   const records = session.answeredRecords();
   const byId = new Map(records.map((r) => [r.id, r.deliveries]));
   for (const slot of el.querySelectorAll('[data-local-delivery]')) {
     const overall = slot.dataset.localDelivery === 'overall';
     const parts = overall ? records.flatMap((r) => r.deliveries ?? []) : byId.get(slot.dataset.localDelivery);
-    slot.innerHTML = localDeliveryHtml(parts, overall ? sessionDelivery : null);
+    slot.innerHTML = localDeliveryHtml(parts);
   }
 }

@@ -28,7 +28,7 @@ export class ReportController {
     // as well as metrics so a later session/edit cannot change the request.
     job.promise = (async () => {
       try {
-        const payload = structuredClone(job.session.evaluationPayload(job.delivery, { includeFillers: false }));
+        const payload = structuredClone(job.session.evaluationPayload({ includeFillers: false }));
         if (!payload.records.length) {
           throw Object.assign(new Error('There are no answered questions to score yet.'), { code: 'NOTHING_TO_SCORE' });
         }

@@ -12,17 +12,17 @@ const record = (delivery) => ({
 const delivery = {
   answers: 1, spokenSeconds: 62, latency: 1.4, wpm: 171, pauseShare: 0.12, pauses: 5, longPauses: 1, pitchHz: 182,
   pitchVarSt: 1.6, loudVarDb: 4.2, words: 180, fillers: 6, fillerShare: 0.033, fillerWords: { um: 4, like: 2 },
-  faceCoverage: 0.96, smileMean: 14, smileShare: 0.08, nods: 1, shakes: 0, awayShare: 0.1,
+  faceCoverage: 0.96, smileMean: 14, smileShare: 0.08, awayShare: 0.1,
   articulationWpm: 196, pitchPhrases: 9, uptalk: 4, uptalkShare: 0.44, loudPhrases: 9, trailOff: 1, trailShare: 0.11,
   longestSilence: null, silentStretches: null, silentCoding: null,
 };
 
 test('evaluation prompt includes delivery measurements and asks for delivery coaching', () => {
-  const prompt = buildEvaluationPrompt(setup, [record(delivery)], { overall: delivery, listeningNods: 3, listeningShakes: 0, listeningSeconds: 120 });
+  const prompt = buildEvaluationPrompt(setup, [record(delivery)], { overall: delivery });
   assert.match(prompt, /Delivery measurements: speaking rate 171 words per minute/);
   assert.match(prompt, /"um" ×4/);
   assert.match(prompt, /"delivery": \{ "summary"/);
-  assert.match(prompt, /made 3 head nod\(s\)/);
+  assert.doesNotMatch(prompt, /nod|shake/i);
   assert.match(prompt, /never infer emotions/);
   assert.match(prompt, /pitch rose at the end of 4 of 9 phrases \(possible uptalk\)/);
   assert.match(prompt, /articulation rate 196 words per minute/);

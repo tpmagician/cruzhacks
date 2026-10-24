@@ -23,18 +23,17 @@ test('role routing recognizes SWE, analyst, PM, and generic roles', () => {
   assert.equal(roleCategory('Accountant'), 'general');
 });
 
-test('interviews have 4 main questions: 2 + 2 with both rounds, 4 with one, with a coding or SQL slot', (t) => {
+test('interviews have one main question per round, and the technical one is the coding or SQL problem', (t) => {
   fresh(t);
   const both = new InterviewSession(setup);
-  assert.equal(both.plans.behavioral.length, 2);
-  assert.equal(both.plans.technical.length, 2);
-  assert.equal(new Set(both.plans.behavioral.map((q) => q.topic)).size, 2);
-  assert.equal(both.plans.technical.filter((q) => q.type === 'coding').length, 1);
+  assert.equal(both.plans.behavioral.length, 1);
+  assert.equal(both.plans.technical.length, 1);
+  assert.equal(both.plans.technical[0].type, 'coding');
   const behavioral = new InterviewSession({ ...setup, rounds: ['behavioral'] });
-  assert.equal(behavioral.plans.behavioral.length, 4);
+  assert.equal(behavioral.plans.behavioral.length, 1);
   assert.equal(behavioral.plans.technical, undefined);
   const analyst = new InterviewSession({ ...setup, role: 'Data Analyst', rounds: ['technical'] });
-  assert.equal(analyst.plans.technical.length, 4);
+  assert.equal(analyst.plans.technical.length, 1);
   assert.deepEqual(analyst.rounds, ['technical']);
   assert.ok(analyst.plans.technical.some((q) => q.type === 'sql'));
   assert.equal(analyst.plans.behavioral, undefined);
@@ -56,24 +55,27 @@ test('preparing or retrying a request does not mutate interview state', (t) => {
   assert.equal(session.record.turns[1].text, 'I resolved a merge conflict.');
 });
 
-test('a complete interview advances rounds, closes records, and caps candidate questions', (t) => {
+test('a complete interview advances rounds, closes records, and ends when the candidate has no more questions', (t) => {
   let now = 10000;
   t.mock.method(Date, 'now', () => now);
   const session = fresh(t);
   open(session);
-  for (const id of ['b1', 'b2', 't1', 't2']) {
+  for (const id of ['b1', 't1']) {
     assert.equal(session.record.id, id);
     now += 5000;
     session.prepareAnswer({ text: 'My reasoning.', explanation: 'My reasoning.', code: 'return 1;' }).commit(reply());
   }
   assert.equal(session.stage, 'candidate_questions');
   assert.equal(session.done, false);
-  assert.deepEqual(session.records.map((r) => r.seconds), [5, 5, 5, 5]);
+  assert.deepEqual(session.records.map((r) => r.seconds), [5, 5]);
   assert.ok(session.records.every((r) => r.closed));
-  for (let i = 0; i < 3; i++) session.prepareAnswer({ text: 'How does the team work?' }).commit(reply('We collaborate.', 'CONTINUE'));
+  // No cap: the interviewer keeps answering until the candidate has no more questions.
+  for (let i = 0; i < 5; i++) session.prepareAnswer({ text: 'How does the team work?' }).commit(reply('We collaborate.', 'CONTINUE'));
+  assert.equal(session.done, false);
+  session.prepareAnswer({ text: "No, that's all." }).commit(reply('Thanks for your time.', 'END'));
   assert.equal(session.done, true);
   assert.equal(session.stage, 'wrapup');
-  assert.equal(session.answeredRecords().length, 4);
+  assert.equal(session.answeredRecords().length, 2);
 });
 
 test('missing action tags count as follow-ups, and the cap forces advancement', (t) => {
@@ -87,7 +89,7 @@ test('missing action tags count as follow-ups, and the cap forces advancement', 
   const forced = session.prepareAnswer({ text: 'More detail.' });
   assert.equal(forced.payload.turn.forced, true);
   forced.commit(reply('Next question.', 'FOLLOW_UP'));
-  assert.equal(session.record.id, 'b2');
+  assert.equal(session.record.id, 't1');
   assert.equal(session.followups, 0);
 });
 
@@ -139,17 +141,17 @@ test('early termination excludes unanswered questions from evaluation', (t) => {
   assert.deepEqual(session.evaluationPayload().records.map((r) => r.id), ['b1']);
 });
 
-test('evaluation aggregates per-answer delivery and keeps listening data separate', (t) => {
+test('evaluation aggregates per-answer delivery', (t) => {
   const session = fresh(t);
   open(session);
   const delivery = { audio: null, face: null, words: 12, fillers: { count: 1, byWord: { um: 1 } } };
   session.prepareAnswer({ text: 'I led the rollout.', delivery }).commit(reply('What changed?', 'FOLLOW_UP'));
   session.prepareAnswer({ text: 'We reduced failures.', delivery }).commit(reply());
-  const payload = session.evaluationPayload({ listeningNods: 2, listeningShakes: 0, listeningSeconds: 20 });
+  const payload = session.evaluationPayload();
   assert.equal(payload.records[0].delivery.answers, 2);
   assert.equal(payload.records[0].delivery.words, 24);
   assert.equal(payload.delivery.overall.fillers, 2);
-  assert.equal(payload.delivery.listeningNods, 2);
+  assert.deepEqual(Object.keys(payload.delivery), ['overall']);
   assert.equal(payload.delivery.overall.wpm, null);
 });
 
@@ -158,8 +160,8 @@ test('weak-question retries preserve the original problem and prioritize low sco
   open(session);
   session.prepareAnswer({ text: 'First answer.' }).commit(reply('Second question?'));
   session.prepareAnswer({ text: 'Second answer.' }).commit(reply());
-  const retry = session.retrySetup({ questions: [{ id: 'b1', scores: { star: 4 } }, { id: 'b2', scores: { star: 2 } }] });
+  const retry = session.retrySetup({ questions: [{ id: 'b1', scores: { star: 4 } }, { id: 't1', scores: { correctness: 2 } }] });
   assert.equal(retry.retry.length, 1);
   assert.equal(retry.retry[0].retryText, 'Second question?');
-  assert.equal(new InterviewSession(retry).plans.behavioral.length, 1);
+  assert.equal(new InterviewSession(retry).plans.technical.length, 1);
 });
