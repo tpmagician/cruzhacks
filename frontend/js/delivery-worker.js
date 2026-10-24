@@ -41,7 +41,7 @@ self.onmessage = async ({ data }) => {
     } catch (error) {
       face?.close();
       pose?.close();
-      self.postMessage({ type: 'error', message: `Could not load camera tracking. Run npm run setup:models, then reload. ${error.message}` });
+      self.postMessage({ type: 'error', message: `Could not load camera tracking. Run npm install and npm run setup:models, then reload. ${error.message}` });
     }
   } else if (data.type === 'frame') {
     try {
